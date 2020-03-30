@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib import transforms
 import networkx as nx
 from networkx.drawing.nx_agraph import graphviz_layout
+import random
 
 print("Imported!")
 
@@ -101,11 +102,13 @@ class Graph:
                 G_nx.add_edge(node.data, subnode.data)
         return G_nx
 
-    def draw(self):
+    def draw(self, prob):
         G_nx = self.build_nx_graph()
         plt.figure(figsize=(10,10))
         pos = nx.kamada_kawai_layout(G_nx)
-        nx.draw_networkx(G_nx, pos=pos, with_labels=True, fontsize=6)
+        nx.draw_networkx(G_nx, pos=pos, with_labels=True, fontsize=4,width=3.8,node_color='r',edge_color='brown')
+        plt.title("Sampled Geneaology", fontsize=14)
+        plt.xlabel("Prob %1.3f " % prob)
         plt.show()
 
     def __iter__(self):
@@ -256,18 +259,63 @@ class Phylogeny:
         #rot = transforms.Affine2D().rotate_deg(90)
         if showing:
             print('Printing Phylogeny...')
-            plt.figure(figsize=(10,10))
+            fig = plt.figure(figsize=(10,10))
             pos = nx.kamada_kawai_layout(G_nx)
-            nx.draw_networkx(G_nx, pos=pos, with_labels=True, fontsize=12)
-            nx.draw_networkx_edge_labels(G_nx, pos=pos, edge_labels=edgelist, font_size=12)
+            nx.draw_networkx(G_nx, pos=pos, with_labels=True, fontsize=12, node_color='r',alpha=0.8, width=2)
+            nx.draw_networkx_edge_labels(G_nx, pos=pos, edge_labels=edgelist, font_size=12,alpha=0.5,width=8,color='brown')
+            plt.title("Perfect Phylogeny")
             plt.show()
 
         return graph
 
 
 if __name__ == '__main__':
-    M1 = np.array([[1, 1, 0, 0, 0], [0, 0, 1, 0, 0], [1, 1, 0, 0, 1], [0, 0, 1, 1, 0], [0, 1, 0, 0, 0]])
-    phylo = Phylogeny(M1)
-    print(phylo.M)
-    print(phylo.K)
-    phylo.main_phylogeny()
+
+    M_5 = np.array([[1, 1, 0, 0, 0], [0, 0, 1, 0, 0], [1, 1, 0, 0, 1], [0, 0, 1, 1, 0], [0, 1, 0, 0, 0]])
+
+    M_10 = np.array([[1, 1, 1, 0, 0, 0, 0, 0, 0, 0],
+                     [1, 0, 0, 1, 1, 1, 1, 1, 1, 0],
+                     [0, 1, 0, 1, 1, 1, 1, 0, 0, 0],
+                     [0, 1, 1, 1, 1, 0, 0, 1, 0, 0],
+                     [0, 1, 0, 1, 1, 1, 0, 1, 0, 0],
+                     [1, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+                     [1, 0, 1, 1, 0, 0, 1, 0, 1, 0],
+                     [0, 0, 0, 0, 1, 0, 1, 1, 1, 1],
+                     [1, 0, 1, 0, 1, 0, 1, 1, 0, 1],
+                     [0, 0, 1, 1, 1, 0, 1, 1, 0, 0]])
+
+    M_20 = np.array([[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+                     [1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1],
+                     [1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0],
+                     [1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1],
+                     [1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 0],
+                     [0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0],
+                     [0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1],
+                     [1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0],
+                     [1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0],
+                     [0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+                     [0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0],
+                     [0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1],
+                     [1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1],
+                     [0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1],
+                     [1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1],
+                     [0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0],
+                     [1, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0],
+                     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1],
+                     [1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0],
+                     [1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1]])
+
+    M_7 = M_10[0:7,0:7]
+
+    #N = 10
+    #M_10 = np.array([[random.randint(0, 1) for i in range(N)] for j in range(N)])
+    #print(M_10)
+
+
+    testcases = [M_5, M_7, M_10, M_20]
+
+    for case in testcases:
+        phylo = Phylogeny(case)
+        print(phylo.M)
+        print(phylo.K)
+        phylo.main_phylogeny()
