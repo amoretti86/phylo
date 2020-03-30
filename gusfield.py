@@ -108,7 +108,7 @@ class Graph:
         pos = nx.kamada_kawai_layout(G_nx)
         nx.draw_networkx(G_nx, pos=pos, with_labels=True, fontsize=4,width=3.8,node_color='r',edge_color='brown')
         plt.title("Sampled Geneaology", fontsize=14)
-        plt.xlabel("Prob %1.3f " % prob)
+        plt.xlabel("Prob %1.6f " % prob)
         plt.show()
 
     def __iter__(self):
