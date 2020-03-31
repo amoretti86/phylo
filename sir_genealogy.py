@@ -187,6 +187,14 @@ class SIR:
             particle_idxes = []
             q_coalescent_probs = []
             # Iterate over particles
+
+
+            if  i > 1:
+                #pdb.set_trace()
+
+                indices = np.random.choice(K, K, p=qs[:,i - 1]/np.sum(qs[:,i-1]), replace=True)
+                dicts_KxN[:,i-1] = dicts_KxN[:,i-1][indices]
+
             for j in range(K):
 
                 #pdb.set_trace()
@@ -233,8 +241,12 @@ class SIR:
                 qs[j,i] = q
 
 
+
+
+
+
                 # Build tree
-                #pdb.set_trace()
+                # pdb.set_trace()
                 n3 = Node(particle_coalesced)
                 if particle1 not in K_data_added[j]:
                     n1 = Node(particle1)
