@@ -278,7 +278,7 @@ class SIR:
             for k in range(K):
                 G = self.build_graph(Graph(), K_nodes_added[k][-1])
         #if showing:
-                G.draw(probs[k])
+                G.draw(genealogy_probs[k])
 
         else:
             G = 1
@@ -333,14 +333,14 @@ if __name__ == "__main__":
 
 
     #print("M1: \n", M1)
-    phylo = Phylogeny(M_10)
+    phylo = Phylogeny(M_5)
     print(phylo.M)
     print(phylo.K)
     graph = phylo.main_phylogeny()
-    sampler = SIR(M_10)
+    sampler = SIR(M_5)
 
 
-    jump_chains, coalescent_probs, theGraph, genealogy_probs = sampler.main_sampling(graph, K = 15000, showing=False)
+    jump_chains, coalescent_probs, theGraph, genealogy_probs = sampler.main_sampling(graph, K = 10, showing=True, resampling=False)
     print("Jump chains:\n", graph)
     print(jump_chains)
     print("Coalescent probabilities:\n")
