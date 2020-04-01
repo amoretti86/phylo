@@ -37,78 +37,78 @@ class SIR:
                 leafnodes = self.get_leafnodes(n, leafnodes)
         return leafnodes
 
-    def merge_singletons(self, dicts, node_list, i):
+    def merge_singletons(self, jump_chain, node_list, i):
         """
         Merges singletons into parent nodes.
-        dicts is a list of all c_i dictionaries
-        dicts[i] is an object, so editing dict_new changes dicts[i]
+        jump_chain is a list of all c_i dictionaries
+        jump_chain[i] is an object, so editing dict_new changes jump_chain[i]
         deepcopy is a workaround.
         """
-        dict_new = deepcopy(dicts[i])
+        temp_jump_chain = deepcopy(jump_chain[i])
         cannot_delete = []
-        for key in dicts[i]:
-            if len(dicts[i][key]) == 1 and node_list[key].data != 'root':
+        for key in jump_chain[i]:
+            if len(jump_chain[i][key]) == 1 and node_list[key].data != 'root':
                 parent = node_list[key].parent
                 parent_idx = node_list.index(parent)
                 cannot_delete.append(parent_idx)
                 # check to see if parent of the key is not in dictionary (c_i)
-                if parent_idx not in dict_new:
-                    dict_new[parent_idx] = dicts[i][key]
+                if parent_idx not in temp_jump_chain:
+                    temp_jump_chain[parent_idx] = jump_chain[i][key]
                 else:
                     # add particle to the existing list of particles
-                    dict_new[parent_idx].append(dicts[i][key][0])
+                    temp_jump_chain[parent_idx].append(jump_chain[i][key][0])
                 if key not in cannot_delete:
                     # delete if dict_new[key] does not correspond to an intermediate node
-                    del dict_new[key]
+                    del temp_jump_chain[key]
                 else:
                     # remove string denoting the singleton to be removed
-                    dict_new[key].remove(dicts[i][key][0])
-        dicts[i] = dict_new
-        return dicts
+                    temp_jump_chain[key].remove(jump_chain[i][key][0])
+        jump_chain[i] = temp_jump_chain
+        return jump_chain
 
-    def merge_singletons_KxN(self, dicts, node_list, i, j):
+    def merge_singletons_KxN(self, jump_chain_KxN, node_list, i, j):
         """
         Merges singletons into parent nodes.
-        dicts is a list of all c_i dictionaries
-        dicts[i] is an object, so editing dict_new changes dicts[i]
+        jump_chain is a list of all c_i dictionaries
+        jump_chain[i] is an object, so editing jump_chain changes jump_chain[i]
         deepcopy is a workaround.
         """
         #pdb.set_trace()
-        dict_new = deepcopy(dicts[j,i])
+        temp_jump_chain = deepcopy(jump_chain_KxN[j,i])
         cannot_delete = []
-        for key in dicts[j,i]:
-            if len(dicts[j,i][key]) == 1 and node_list[key].data != 'root':
+        for key in jump_chain_KxN[j,i]:
+            if len(jump_chain_KxN[j,i][key]) == 1 and node_list[key].data != 'root':
                 parent = node_list[key].parent
                 parent_idx = node_list.index(parent)
                 cannot_delete.append(parent_idx)
                 # check to see if parent of the key is not in dictionary (c_i)
-                if parent_idx not in dict_new:
-                    dict_new[parent_idx] = dicts[j,i][key]
+                if parent_idx not in temp_jump_chain:
+                    temp_jump_chain[parent_idx] = jump_chain_KxN[j,i][key]
                 else:
                     # add particle to the existing list of particles
-                    dict_new[parent_idx].append(dicts[j,i][key][0])
+                    temp_jump_chain[parent_idx].append(jump_chain_KxN[j,i][key][0])
                 if key not in cannot_delete:
                     # delete if dict_new[key] does not correspond to an intermediate node
-                    del dict_new[key]
+                    del temp_jump_chain[key]
                 else:
                     # remove string denoting the singleton to be removed
-                    dict_new[key].remove(dicts[j, i][key][0])
-        dicts[j,i] = dict_new
-        return dicts
+                    temp_jump_chain[key].remove(jump_chain_KxN[j, i][key][0])
+        jump_chain_KxN[j,i] = temp_jump_chain
+        return jump_chain_KxN
 
-    def no_singletons(self, dicts, node_list, i):
+    def no_singletons(self, jump_chain, node_list, i):
         """
         Check whether tree has any singletons at all
         Step 1 and 4c of Palacios require this
         """
         result = True
-        for key in dicts[i]:
-            if len(dicts[i][key]) == 1 and node_list[key].data!= 'root':
+        for key in jump_chain[i]:
+            if len(jump_chain[i][key]) == 1 and node_list[key].data!= 'root':
                 result = False
         return result
 
 
-    def create_node_sampler(self, dicts, node_list, i):
+    def create_node_sampler(self, jump_chain, node_list, i):
         """
         This defines the sample space of nodes at which coalescent events can happen.
         The sample space is defined in the list variable 'result'
@@ -116,9 +116,9 @@ class SIR:
         """
         #pdb.set_trace()
         result = []
-        for key in dicts[i]:
-            if len(dicts[i][key]) > 1:
-                for p in range(len(dicts[i][key])):
+        for key in jump_chain[i]:
+            if len(jump_chain[i][key]) > 1:
+                for p in range(len(jump_chain[i][key])):
                     result.append(key)
         return result
 
@@ -136,10 +136,13 @@ class SIR:
 
         return G
 
-    def main_sampling(self, graph, K, showing=True):
+    def main_sampling(self, graph, K, showing=True, resampling=True):
     #def main_sampling(self, showing=True):
         """
-        Operates on a phylogeny object (graph) and M (incidence matrix)
+        Input:  A phylogeny object (graph) and M (incidence matrix)
+        Output: The matrix jump_chain_KxN representing jump chain of the stochastic process
+                The matrix of probabilities for the KxNm1 coalescent events across MC samples
+
         """
         #pdb.set_trace()
         root_node = graph.node_dict['root'] # Do this K times for each geneaology
@@ -149,7 +152,7 @@ class SIR:
 
         n = len(self.M) # number of particles
         # create a list of n empty dictionaries (to represent c_n) of the n coalescent events
-        dicts = [{} for i in range(n)] # c_n to c_1
+        jump_chain = [{} for i in range(n)] # c_n to c_1
         # Perhaps this should be a numpy array\
 
         # Initialize c_n
@@ -160,16 +163,16 @@ class SIR:
                 # node_list[i].data is a string of particles, e.g.: 's3,s4,s5'
                 # this splits the string into a list of strings representing particles
                 # e.g.: ['s3', 's4', 's5']
-                # the zero here in dicts[0] corresponds to c_n or the nth state of the coalescent
-                dicts[0][i] = node_list[i].data.split(',')
+                # the zero here in jump_chain[0] corresponds to c_n or the nth state of the coalescent
+                jump_chain[0][i] = node_list[i].data.split(',')
 
         # Execution of merge before the for loop
-        while self.no_singletons(dicts, node_list, 0) == False:
-            dicts = self.merge_singletons(dicts, node_list, 0)
+        while self.no_singletons(jump_chain, node_list, 0) == False:
+            jump_chain = self.merge_singletons(jump_chain, node_list, 0)
 
         # variable to store probability of geneaology
         #pdb.set_trace()
-        dicts_KxN = np.array([dicts] * K)
+        jump_chain_KxN = np.array([jump_chain] * K)
         q = 1
         qs = np.zeros([K,n-1])
 
@@ -189,60 +192,56 @@ class SIR:
             # Iterate over particles
 
 
-            if  i > 1:
-                #pdb.set_trace()
+            if resampling and i > 1:
 
                 indices = np.random.choice(K, K, p=qs[:,i - 1]/np.sum(qs[:,i-1]), replace=True)
-                dicts_KxN[:,i-1] = dicts_KxN[:,i-1][indices]
+                jump_chain_KxN[:,i-1] = jump_chain_KxN[:,i-1][indices]
+
 
             for j in range(K):
 
                 #pdb.set_trace()
                 # Set c[n-1] = c[n], copying our dictionary representing the particle set
-                dicts_KxN[j,i+1] = deepcopy(dicts_KxN[j,i])
-                node_sampler = self.create_node_sampler(dicts_KxN[j], node_list, i)
+                jump_chain_KxN[j,i+1] = deepcopy(jump_chain_KxN[j,i])
+                node_sampler = self.create_node_sampler(jump_chain_KxN[j], node_list, i)
                 node_idx = random.choice(node_sampler)
                 q1 = node_sampler.count(node_idx)/len(node_sampler)
 
                 q_selection_probs.append(q1)
                 # enumerate the set of particles to sample from the given node
-                k_particle_sampler = [i for i in range(len(dicts_KxN[j, i][node_idx]))]
+                k_particle_sampler = [i for i in range(len(jump_chain_KxN[j, i][node_idx]))]
                 particle_samplers.append(k_particle_sampler)
                 # sample two particles to coalesce
                 k_particle_idx = random.sample(k_particle_sampler, 2)
                 # compute combinatorial term
-                q2 = 1/self.ncr(len(dicts_KxN[j,i][node_idx]),2)
+                q2 = 1/self.ncr(len(jump_chain_KxN[j,i][node_idx]),2)
                 q_coalescent_probs.append(q2)
 
 
                 # Grab the index and corresponding first and second particle to coalesce to store
                 # in variables (these are two strings)
-                particle1 = dicts_KxN[j,i][node_idx][k_particle_idx[0]]
-                particle2 = dicts_KxN[j,i][node_idx][k_particle_idx[1]]
+                particle1 = jump_chain_KxN[j,i][node_idx][k_particle_idx[0]]
+                particle2 = jump_chain_KxN[j,i][node_idx][k_particle_idx[1]]
                 particle_coalesced = particle1 + '+' + particle2
 
 
                 # Coalesce (4c). Remove these strings from the dict of particles
                 # and add string for coalescent event
-                #print("dicts_KxN[j,i + 1][node_indices[j]]\n", dicts_KxN[j,i + 1][node_idx])
+                #print("jump_chain_KxN[j,i + 1][node_indices[j]]\n", jump_chain_KxN[j,i + 1][node_idx])
                 #print("particle to be removed:", particle1)
-                dicts_KxN[j,i + 1][node_idx].remove(particle1)
-                dicts_KxN[j,i + 1][node_idx].remove(particle2)
-                dicts_KxN[j,i + 1][node_idx].append(particle_coalesced)
+                jump_chain_KxN[j,i + 1][node_idx].remove(particle1)
+                jump_chain_KxN[j,i + 1][node_idx].remove(particle2)
+                jump_chain_KxN[j,i + 1][node_idx].append(particle_coalesced)
 
 
                 # Merge singletons after coalescence (4d)
-                while self.no_singletons(dicts_KxN[j], node_list, i + 1) == False:
-                    dicts_KxN = self.merge_singletons_KxN(dicts_KxN, node_list, i + 1, j)
+                while self.no_singletons(jump_chain_KxN[j], node_list, i + 1) == False:
+                    jump_chain_KxN = self.merge_singletons_KxN(jump_chain_KxN, node_list, i + 1, j)
 
                 # Update probability of geneaology (4e)
                 #q = q * q1 * q2
                 q = q1*q2
                 qs[j,i] = q
-
-
-
-
 
 
                 # Build tree
@@ -270,7 +269,7 @@ class SIR:
             #K_data_added.append(data_added)
             #K_nodes_added.append(nodes_added)
 
-        probs = np.exp(np.einsum('ij->i', np.log((qs))))
+        genealogy_probs = np.exp(np.einsum('ij->i', np.log((qs))))
         self.K_nodes_added = K_nodes_added
 
         # Revisit!
@@ -281,9 +280,12 @@ class SIR:
         #if showing:
                 G.draw(probs[k])
 
+        else:
+            G = 1
 
 
-        return dicts_KxN, qs, G, probs
+
+        return jump_chain_KxN, qs, G, genealogy_probs
 
 
     def plot_genealogy(self, graph, i):
@@ -331,17 +333,33 @@ if __name__ == "__main__":
 
 
     #print("M1: \n", M1)
-    phylo = Phylogeny(M_5)
+    phylo = Phylogeny(M_10)
     print(phylo.M)
     print(phylo.K)
     graph = phylo.main_phylogeny()
-    sampler = SIR(M_5)
+    sampler = SIR(M_10)
 
-    #print("graph: ", graph)
-    mydicts, myq, myG, myprobs = sampler.main_sampling(graph, K = 3)
-    print(mydicts)
-    print(myq)
-    print(myG)
-    print(myprobs)
+
+    jump_chains, coalescent_probs, theGraph, genealogy_probs = sampler.main_sampling(graph, K = 15000, showing=False)
+    print("Jump chains:\n", graph)
+    print(jump_chains)
+    print("Coalescent probabilities:\n")
+    print(coalescent_probs)
+    print("Graph:\n")
+    print(theGraph)
+    print("Genealogy probabilities:\n")
+    print(genealogy_probs)
 
     #sampler.plot_genealogy(Graph(),0)
+
+    """
+    Coalescent simulators (bwd vs fwd) for data
+    Recombination! Not used in perfect phylogeny
+    Look at phylos at intervals of sites for recomb?
+    -> Make sure simulator registers sites of recomb
+    -> Treat different intervals as different sites of sampling
+    -> Parameterizing branch length / width ...
+    -> Writing out the target, the importance weights, and small proof of unbiasedness
+    -> Write out a more expressive generative model / target
+    -> Allow *incomplete lineage sorting* coalescent events that do not respect species phylo
+    """
