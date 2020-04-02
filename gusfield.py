@@ -123,6 +123,11 @@ class Phylogeny:
         self.K = self.build_k()
 
     def radix_sort(self, m):
+        indices_zeros = []
+        for i in range(len(m)):
+            if np.count_nonzero(m[i]) == 0:
+                indices_zeros.append(i)
+        m = np.delete(m, indices_zeros, axis=0)
         a = []
         for i in range(len(m.T)):
             a.append('')
