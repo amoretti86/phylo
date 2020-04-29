@@ -261,10 +261,6 @@ class CSMC:
         # Iterate over coalescent events
         for i in range(self.n - 1):
 
-            # These need better names to describe what is happening
-            q_selection_probs = []
-            particle_samplers = []
-            q_coalescent_probs = []
 
             # Resampling step
             if resampling and i > 1:
