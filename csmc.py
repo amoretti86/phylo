@@ -212,12 +212,15 @@ class CSMC:
         return G
 
     #@staticmethod
-    def resample(self, weights, jump_chain_K):
+    def resample(self, weights, jump_chain_K, i):
         """
         Resamples partial states (particles) based on importance weights
         """
+        #pdb.set_trace()
         K = weights.shape[0]
-        indices = np.random.choice(K, K, p = weights/np.sum[weights], replace=True)
+        importance_weights = np.exp(weights[:,i])
+        norm = np.sum(importance_weights)
+        indices = np.random.choice(K, K, p = importance_weights/norm, replace=True)
         jump_chain_K = jump_chain_K[indices]
         return jump_chain_K
 
@@ -331,7 +334,7 @@ class CSMC:
 
         q = 1
         log_weights_KxNm1 = np.zeros([K, self.n-1])
-        log_weights_KxNm1[:,0] = 1./K
+        log_weights_KxNm1[:,0] = np.log(1./K)
 
         # These need better names that describe what is happening here
         self.graph_repn_data_K = [[] for i in range(K)]
@@ -348,8 +351,8 @@ class CSMC:
         for i in range(self.n - 1):
 
             # Resampling step
-            if resampling and i > 1:
-                jump_chain_KxN[:,i] = self.resample(log_weights_KxNm1, jump_chain_KxN[:,i])
+            if resampling and i > 0:
+                jump_chain_KxN[:,i-1] = self.resample(log_weights_KxNm1, jump_chain_KxN[:,i-1], i-1)
 
             # Iterate over partial states
             for j in range(K):
@@ -358,6 +361,7 @@ class CSMC:
                 particle1, particle2, particle_coalesced, bl1, bl2, q2, jump_chain_KxN \
                     = self.extend_partial_state(jump_chain_KxN, j, i)
 
+                # Save partial set and branch length data
                 vertex_dicts[j][particle_coalesced] = Vertex(id=particle_coalesced, data=None)
                 vertex_dicts[j][particle_coalesced].left = vertex_dicts[j][particle1]
                 vertex_dicts[j][particle_coalesced].right = vertex_dicts[j][particle2]
@@ -375,9 +379,10 @@ class CSMC:
                 # Build tree
                 self.build_tree(particle1, particle2, particle_coalesced, j)
 
-        # Not used here...
-        sampled_probs = np.exp(np.sum(log_weights_KxNm1, axis=1))
-        print(sampled_probs)
+        # Compute importance weights across all ranks:
+        #tree_probabilities = np.exp(np.sum(log_weights_KxNm1, axis=1))
+        tree_log_probabilities = np.sum(log_weights_KxNm1, axis=1)
+        print(tree_log_probabilities)
 
         # Revisit!
         # pdb.set_trace()
@@ -385,20 +390,28 @@ class CSMC:
             for k in range(K):
                 G = self.build_graph(Graph(), self.graph_repn_nodes_K[k][-1])
                 # if showing:
-                G.draw(sampled_probs[k])
+                G.draw(tree_log_probabilities[k])
 
         else:
             G = -1
 
-        return jump_chain_KxN, log_weights_KxNm1, G, sampled_probs
+        return jump_chain_KxN, log_weights_KxNm1, G, tree_log_probabilities
 
-    #return jump_chain_KxN
 
 if __name__ == "__main__":
 
+    simulate_data = False
+    load_strings = True
+
     alphabet = 'ACTG'
+    alphabet_dir = {'A': [1, 0, 0, 0],
+                    'C': [0, 1, 0, 0],
+                    'T': [0, 0, 1, 0],
+                    'G': [0, 0, 0, 1]}
+
     alphabet = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
 
+    genome_strings = ['ACTTTGAGAG','ACTTTGACAG','ACTTTGACTG','ACTTTGACTC']
 
     def simulateDNA(nsamples, seqlength, alphabet):
         genomes_NxSxA = np.zeros([nsamples, seqlength, alphabet.shape[0]])
@@ -406,28 +419,33 @@ if __name__ == "__main__":
             genomes_NxSxA[n] = np.array([random.choice(alphabet) for i in range(seqlength)])
         return genomes_NxSxA
 
+    def form_dataset_from_strings(genome_strings, alphabet_dir):
+        #pdb.set_trace()
+        genomes_NxSxA = np.zeros([len(genome_strings),len(genome_strings[0]),len(alphabet_dir)])
+        for i in range(genomes_NxSxA.shape[0]):
+            for j in range(genomes_NxSxA.shape[1]):
+                genomes_NxSxA[i,j] = alphabet_dir[genome_strings[i][j]]
 
-    data_NxSxA = simulateDNA(4, 5, alphabet)
-    print("Simulated genomes:\n", data_NxSxA)
+        taxa = ['S' + str(i) for i in range(genomes_NxSxA.shape[0])]
 
-    taxa = ['S' + str(i) for i in range(data_NxSxA.shape[0])]
-    #print(taxa)
+        datadict = {'taxa': taxa,
+                    'genome': genomes_NxSxA}
+        return datadict
 
-    datadict = {'taxa': taxa,
-                'genome': data_NxSxA}
+
+    if simulate_data:
+        data_NxSxA = simulateDNA(4, 10, alphabet)
+        print("Simulated genomes:\n", data_NxSxA)
+
+        taxa = ['S' + str(i) for i in range(data_NxSxA.shape[0])]
+        #print(taxa)
+
+        datadict = {'taxa': taxa,
+                    'genome': data_NxSxA}
+
+    if load_strings:
+
+        datadict = form_dataset_from_strings(genome_strings, alphabet_dir)
 
     csmc = CSMC(datadict)
-    chain, qs, G, probs = csmc.sample_phylogenies(5)
-
-
-
-
-
-
-
-
-
-
-
-    
-
+    chain, log_weights, G, tree_probs = csmc.sample_phylogenies(100, resampling=True)
