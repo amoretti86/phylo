@@ -140,7 +140,6 @@ class CSMC:
         self.Pmatrix = spl.expm(self.Qmatrix)
         self.prior = np.ones(self.Qmatrix.shape[0])/self.Qmatrix.shape[0]
 
-
     #@staticmethod
     def ncr(self, n, r):
         # Compute combinatorial term n choose r
@@ -148,6 +147,13 @@ class CSMC:
         numer = reduce(op.mul, range(n, n-r, -1), 1)
         denom = reduce(op.mul, range(1, r+1), 1)
         return numer/denom
+
+    #@staticmethod
+    def prod(self, lst):
+        output = 1
+        for i in lst:
+            output *= i
+        return output
 
     #@staticmethod
     def create_node_sampler(self, jump_chain, i):
@@ -206,12 +212,15 @@ class CSMC:
         return G
 
     #@staticmethod
-    def resample(self, weights, jump_chain_K):
+    def resample(self, weights, jump_chain_K, i):
         """
         Resamples partial states (particles) based on importance weights
         """
+        #pdb.set_trace()
         K = weights.shape[0]
-        indices = np.random.choice(K, K, p = weights/np.sum[weights], replace=True)
+        importance_weights = np.exp(weights[:,i])
+        norm = np.sum(importance_weights)
+        indices = np.random.choice(K, K, p = importance_weights/norm, replace=True)
         jump_chain_K = jump_chain_K[indices]
         return jump_chain_K
 
@@ -278,44 +287,42 @@ class CSMC:
     def conditional_likelihood(self, left, right, left_branch, right_branch):
         #pdb.set_trace()
         # Computes the conditional likelihood using the formula above
-        likelihood = np.zeros(self.Qmatrix.shape[0])
+        likelihood = np.zeros((len(self.genome_NxSxA[0]), self.Qmatrix.shape[0]))
         # Matrix exponentiation here is probably inefficient
         left_Pmatrix = spl.expm(self.Qmatrix * left_branch)
         right_Pmatrix = spl.expm(self.Qmatrix * right_branch)
         for i in range(self.Qmatrix.shape[0]):
-            left_prob = np.dot(left_Pmatrix[i], left.data)
-            right_prob = np.dot(right_Pmatrix[i], right.data)
-            likelihood[i] = left_prob * right_prob
+            left_prob = np.dot(left_Pmatrix[i], left.data.T).T
+            right_prob = np.dot(right_Pmatrix[i], right.data.T).T
+            likelihood[:,i] = np.multiply(left_prob,right_prob)
         return likelihood
 
     def compute_tree_likelihood(self, prior, root):
-        tree_likelihood = np.dot(prior, root.data)
+        '''
+        multiply probabilities over all the sites through prod
+        '''
+        tree_likelihood = self.prod(np.dot(prior, root.data.T))
         #self.tree_likelihood = tree_likelihood
         return tree_likelihood
 
 
-    def compute_log_conditional_likelihood(self, particle1, particle2, particle_coalesced, bl1, bl2):
+    def compute_log_conditional_likelihood(self, vertex_dict, particle1, particle2, particle_coalesced, bl1, bl2):
         """
         """
         #pdb.set_trace()
         loglik = 0
-        root = Vertex(particle_coalesced)
-        root.left_branch = bl1
-        root.right_branch = bl2
-        root.left = Vertex(particle1)
-        root.right = Vertex(particle2)
-        #internal_nodes = self.get_internal_nodes(root)
-        internal_nodes = [root]
-        for i in range(self.genome_NxSxA.shape[1]):
+        root = vertex_dict[particle_coalesced]
+        internal_nodes = self.get_internal_nodes(root)
+
+        #for i in range(self.genome_NxSxA.shape[1]):
             #BP = BeliefPropagation(self.Qmatrix, root)
-            root.left.data = self.genome_NxSxA[self.taxa.index(particle1),i]
-            root.right.data = self.genome_NxSxA[self.taxa.index(particle2),i]
-            self.pass_messages(internal_nodes)
-            tree_likelihood = self.compute_tree_likelihood(self.prior, root)
-            loglik += np.log(tree_likelihood)
+            # root.left.data = self.genome_NxSxA[self.taxa.index(particle1),i]
+            # root.right.data = self.genome_NxSxA[self.taxa.index(particle2),i]
+        self.pass_messages(internal_nodes)
+        tree_likelihood = self.compute_tree_likelihood(self.prior, root)
+        loglik += np.log(tree_likelihood)
 
         return loglik
-
 
     def sample_phylogenies(self, K, resampling=False, showing=True):
 
@@ -327,7 +334,7 @@ class CSMC:
 
         q = 1
         log_weights_KxNm1 = np.zeros([K, self.n-1])
-        log_weights_KxNm1[:,0] = 1./K
+        log_weights_KxNm1[:,0] = np.log(1./K)
 
         # These need better names that describe what is happening here
         self.graph_repn_data_K = [[] for i in range(K)]
@@ -335,13 +342,17 @@ class CSMC:
 
         log_likelihood = np.zeros([K,self.n-1])
 
+        vertex_dicts = [{} for k in range(K)]
+        for j in range(K):
+            for i in range(self.n):
+                vertex_dicts[j][self.taxa[i]] = Vertex(id=self.taxa[i],data=self.genome_NxSxA[i])
+
         # Iterate over coalescent events
         for i in range(self.n - 1):
 
-
             # Resampling step
-            if resampling and i > 1:
-                jump_chain_KxN[:,i] = self.resample(log_weights_KxNm1, jump_chain_KxN[:,i])
+            if resampling and i > 0:
+                jump_chain_KxN[:,i-1] = self.resample(log_weights_KxNm1, jump_chain_KxN[:,i-1], i-1)
 
             # Iterate over partial states
             for j in range(K):
@@ -350,19 +361,28 @@ class CSMC:
                 particle1, particle2, particle_coalesced, bl1, bl2, q2, jump_chain_KxN \
                     = self.extend_partial_state(jump_chain_KxN, j, i)
 
+                # Save partial set and branch length data
+                vertex_dicts[j][particle_coalesced] = Vertex(id=particle_coalesced, data=None)
+                vertex_dicts[j][particle_coalesced].left = vertex_dicts[j][particle1]
+                vertex_dicts[j][particle_coalesced].right = vertex_dicts[j][particle2]
+                vertex_dicts[j][particle_coalesced].left_branch = bl1
+                vertex_dicts[j][particle_coalesced].right_branch = bl2
+
                 # Compute log conditional likelihood across genome for a partial state
                 log_likelihood[j,i] \
-                    = self.compute_log_conditional_likelihood(particle1, particle2,particle_coalesced, bl1, bl2)
+                    = self.compute_log_conditional_likelihood(vertex_dicts[j], particle1, particle2, particle_coalesced, bl1, bl2)
 
                 # Compute the log importance weights
-                if i > 1:
+                if i > 0:
                     log_weights_KxNm1[j, i] = log_likelihood[j,i] - log_likelihood[j,i-1] - np.log(q2)
 
                 # Build tree
                 self.build_tree(particle1, particle2, particle_coalesced, j)
 
-        # Not used here...
-        genealogy_probs = np.exp(np.einsum('ij->i', np.log((log_weights_KxNm1))))
+        # Compute importance weights across all ranks:
+        #tree_probabilities = np.exp(np.sum(log_weights_KxNm1, axis=1))
+        tree_log_probabilities = np.sum(log_weights_KxNm1, axis=1)
+        print(tree_log_probabilities)
 
         # Revisit!
         # pdb.set_trace()
@@ -370,37 +390,62 @@ class CSMC:
             for k in range(K):
                 G = self.build_graph(Graph(), self.graph_repn_nodes_K[k][-1])
                 # if showing:
-                G.draw(genealogy_probs[k])
+                G.draw(tree_log_probabilities[k])
 
         else:
-            G = 1
+            G = -1
 
-        return jump_chain_KxN, log_weights_KxNm1, G, genealogy_probs
+        return jump_chain_KxN, log_weights_KxNm1, G, tree_log_probabilities
 
-    #return jump_chain_KxN
 
 if __name__ == "__main__":
 
+    simulate_data = False
+    load_strings = True
+
     alphabet = 'ACTG'
+    alphabet_dir = {'A': [1, 0, 0, 0],
+                    'C': [0, 1, 0, 0],
+                    'T': [0, 0, 1, 0],
+                    'G': [0, 0, 0, 1]}
+
     alphabet = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
 
+    genome_strings = ['ACTTTGAGAG','ACTTTGACAG','ACTTTGACTG','ACTTTGACTC']
 
-    def simulateDNA(seqlength, nsamples, alphabet):
+    def simulateDNA(nsamples, seqlength, alphabet):
         genomes_NxSxA = np.zeros([nsamples, seqlength, alphabet.shape[0]])
         for n in range(nsamples):
             genomes_NxSxA[n] = np.array([random.choice(alphabet) for i in range(seqlength)])
         return genomes_NxSxA
 
+    def form_dataset_from_strings(genome_strings, alphabet_dir):
+        #pdb.set_trace()
+        genomes_NxSxA = np.zeros([len(genome_strings),len(genome_strings[0]),len(alphabet_dir)])
+        for i in range(genomes_NxSxA.shape[0]):
+            for j in range(genomes_NxSxA.shape[1]):
+                genomes_NxSxA[i,j] = alphabet_dir[genome_strings[i][j]]
 
-    data_NxSxA = simulateDNA(20, 10, alphabet)
-    print("Simulated genomes:\n", data_NxSxA)
+        taxa = ['S' + str(i) for i in range(genomes_NxSxA.shape[0])]
 
-    taxa = ['S' + str(i) for i in range(data_NxSxA.shape[0])]
-    # print(taxa)
+        datadict = {'taxa': taxa,
+                    'genome': genomes_NxSxA}
+        return datadict
 
-    datadict = {'taxa': taxa,
-                'genome': data_NxSxA}
+
+    if simulate_data:
+        data_NxSxA = simulateDNA(4, 10, alphabet)
+        print("Simulated genomes:\n", data_NxSxA)
+
+        taxa = ['S' + str(i) for i in range(data_NxSxA.shape[0])]
+        #print(taxa)
+
+        datadict = {'taxa': taxa,
+                    'genome': data_NxSxA}
+
+    if load_strings:
+
+        datadict = form_dataset_from_strings(genome_strings, alphabet_dir)
 
     csmc = CSMC(datadict)
-    chain, qs, G, probs = csmc.sample_phylogenies(5)
-
+    chain, log_weights, G, tree_probs = csmc.sample_phylogenies(100, resampling=True)
