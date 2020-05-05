@@ -9,6 +9,7 @@ from scipy.stats import lognorm
 import scipy.linalg as spl
 from scipy.linalg import expm
 import matplotlib.pyplot as plt
+import pandas as pd
 import pdb
 from copy import deepcopy
 from functools import reduce
@@ -51,6 +52,7 @@ class Vertex:
         self.right = None
         self.left_branch = None
         self.right_branch = None
+        self.is_root = True
 
 
 
@@ -133,12 +135,14 @@ class CSMC:
         self.n = len(datadict['taxa'])
         self.taxa = datadict['taxa']
         self.genome_NxSxA = datadict['genome']
+        self.s = len(self.genome_NxSxA[0])
         self.Qmatrix = np.array([[-3.,1.,1.,1.],
                                  [1.,-3.,1.,1.],
                                  [1.,1.,-3.,1.],
-                                 [1.,1.,1.,-3.]])
+                                 [1.,1.,1.,-3.]])/1000
         self.Pmatrix = spl.expm(self.Qmatrix)
         self.prior = np.ones(self.Qmatrix.shape[0])/self.Qmatrix.shape[0]
+
 
     #@staticmethod
     def ncr(self, n, r):
@@ -224,6 +228,12 @@ class CSMC:
         jump_chain_K = jump_chain_K[indices]
         return jump_chain_K
 
+    def sort_string(self, s):
+        lst = s.split('+')
+        lst = sorted(lst)
+        result = '+'.join(lst)
+        return result
+
     def extend_partial_state(self, jump_chain_KxN, j, i):
         """
         Forms a partial state by sampling two nodes from the proposal distribution
@@ -236,7 +246,7 @@ class CSMC:
         q2 = 1 / self.ncr(len(jump_chain_KxN[j,i][0]), 2)
         particle1 = sample[0]
         particle2 = sample[1]
-        particle_coalesced = particle1 + '+' + particle2
+        particle_coalesced = self.sort_string(particle1 + '+' + particle2)
         jump_chain_KxN[j,i+1][0].remove(particle1)
         jump_chain_KxN[j,i+1][0].remove(particle2)
         jump_chain_KxN[j,i+1][0].append(particle_coalesced)
@@ -301,117 +311,169 @@ class CSMC:
         '''
         multiply probabilities over all the sites through prod
         '''
-        tree_likelihood = self.prod(np.dot(prior, root.data.T))
+        tree_likelihood = np.dot(prior, root.data.T)
         #self.tree_likelihood = tree_likelihood
         return tree_likelihood
 
 
-    def compute_log_conditional_likelihood(self, vertex_dict, particle1, particle2, particle_coalesced, bl1, bl2):
+    def compute_log_conditional_likelihood(self, v):
         """
         """
         #pdb.set_trace()
-        loglik = 0
-        root = vertex_dict[particle_coalesced]
-        internal_nodes = self.get_internal_nodes(root)
+        internal_nodes = self.get_internal_nodes(v)
 
         #for i in range(self.genome_NxSxA.shape[1]):
             #BP = BeliefPropagation(self.Qmatrix, root)
             # root.left.data = self.genome_NxSxA[self.taxa.index(particle1),i]
             # root.right.data = self.genome_NxSxA[self.taxa.index(particle2),i]
         self.pass_messages(internal_nodes)
-        tree_likelihood = self.compute_tree_likelihood(self.prior, root)
-        loglik += np.log(tree_likelihood)
-
+        tree_likelihood = self.compute_tree_likelihood(self.prior, v)
+        loglik = 0
+        for i in range(self.s):
+            loglik += np.log(tree_likelihood[i])
         return loglik
 
     def sample_phylogenies(self, K, resampling=False, showing=True):
 
-        self.K = K
+        n = self.n
         # Represent a single jump_chain as a list of dictionaries
-        jump_chain = [{} for i in range(self.n)]
+        jump_chain = [{} for i in range(n)]
         jump_chain[0][0] = self.taxa
         jump_chain_KxN = np.array([jump_chain] * K) # KxN matrix of jump_chain dictionaries
 
         q = 1
-        log_weights_KxNm1 = np.zeros([K, self.n-1])
-        log_weights_KxNm1[:,0] = np.log(1./K)
+        log_weights_KxNm1 = np.zeros([K, n-1])
+        log_weights_KxNm1[:,0] = np.log(1)
+        weights_KxNm1 = np.zeros([K, n-1])
 
         # These need better names that describe what is happening here
         self.graph_repn_data_K = [[] for i in range(K)]
         self.graph_repn_nodes_K = [[] for i in range(K)]
 
-        log_likelihood = np.zeros([K,self.n-1])
+        log_likelihood = np.zeros([K,n-1])
 
         vertex_dicts = [{} for k in range(K)]
+        vertex_dicts_to_sort = [{} for k in range(K)]
         for j in range(K):
-            for i in range(self.n):
+            for i in range(n):
                 vertex_dicts[j][self.taxa[i]] = Vertex(id=self.taxa[i],data=self.genome_NxSxA[i])
 
         # Iterate over coalescent events
-        for i in range(self.n - 1):
+        for i in range(n - 1):
 
             # Resampling step
             if resampling and i > 0:
                 jump_chain_KxN[:,i-1] = self.resample(log_weights_KxNm1, jump_chain_KxN[:,i-1], i-1)
 
             # Iterate over partial states
-            for j in range(K):
+            for k in range(K):
 
                 # Extend partial states
                 particle1, particle2, particle_coalesced, bl1, bl2, q2, jump_chain_KxN \
-                    = self.extend_partial_state(jump_chain_KxN, j, i)
+                    = self.extend_partial_state(jump_chain_KxN, k, i)
 
                 # Save partial set and branch length data
-                vertex_dicts[j][particle_coalesced] = Vertex(id=particle_coalesced, data=None)
-                vertex_dicts[j][particle_coalesced].left = vertex_dicts[j][particle1]
-                vertex_dicts[j][particle_coalesced].right = vertex_dicts[j][particle2]
-                vertex_dicts[j][particle_coalesced].left_branch = bl1
-                vertex_dicts[j][particle_coalesced].right_branch = bl2
+                vertex_dicts[k][particle_coalesced] = Vertex(id=particle_coalesced, data=None)
+                vertex_dicts[k][particle_coalesced].left = vertex_dicts[k][particle1]
+                vertex_dicts[k][particle_coalesced].right = vertex_dicts[k][particle2]
+                vertex_dicts[k][particle_coalesced].left_branch = bl1
+                vertex_dicts[k][particle_coalesced].right_branch = bl2
+                vertex_dicts[k][particle1].is_root = False
+                vertex_dicts[k][particle2].is_root = False
 
+                # Build tree
+                self.build_tree(particle1, particle2, particle_coalesced, k)
+
+            for k in range(K):
+                vertex_dicts_to_sort[k] = sorted(vertex_dicts[k])
+
+            for k in range(K):
                 # Compute log conditional likelihood across genome for a partial state
-                log_likelihood[j,i] \
-                    = self.compute_log_conditional_likelihood(vertex_dicts[j], particle1, particle2, particle_coalesced, bl1, bl2)
+                log_likelihood[k,i] = 0
+                for key in vertex_dicts[k]:
+                    if vertex_dicts[k][key].is_root:
+                        log_likelihood[k,i] \
+                        += self.compute_log_conditional_likelihood(vertex_dicts[k][key])*0.000282
+
+                log_likelihood_tilda = 1
+                if i > 0:
+                    log_likelihood_tilda = 0
+                    idx = random.randint(0,K-1)
+                    for key in vertex_dicts_laststep[idx]:
+                        if vertex_dicts_laststep[idx][key].is_root:
+                            log_likelihood_tilda \
+                            += self.compute_log_conditional_likelihood(vertex_dicts_laststep[idx][key])*0.000282
+
+                
+                v_ = 1/vertex_dicts_to_sort.count(vertex_dicts_to_sort[k])
 
                 # Compute the log importance weights
                 if i > 0:
-                    log_weights_KxNm1[j, i] = log_likelihood[j,i] - log_likelihood[j,i-1] - np.log(q2)
+                    log_weights_KxNm1[k, i] = log_likelihood[k,i] - log_likelihood_tilda + np.log(v_) - np.log(q2)
+                    weights_KxNm1[k, i] = np.exp(log_weights_KxNm1[k, i])
 
-                # Build tree
-                self.build_tree(particle1, particle2, particle_coalesced, j)
+            vertex_dicts_laststep = deepcopy(vertex_dicts)
+            print('Computation in progress: step ' + str(i+1))
 
         # Compute importance weights across all ranks:
         #tree_probabilities = np.exp(np.sum(log_weights_KxNm1, axis=1))
-        tree_log_probabilities = np.sum(log_weights_KxNm1, axis=1)
-        print(tree_log_probabilities)
-
-        # Revisit!
-        # pdb.set_trace()
-        if showing:
+        #tree_log_probabilities = np.sum(log_weights_KxNm1, axis=1)
+        #print(tree_log_probabilities)
+        trees = []
+        for dic in vertex_dicts:
+            trees.append(dic.keys())
+        tree_probabilities = []
+        for i in range(len(trees)):
+            tree = trees[i]
+            tree_probabilities.append(0)
             for k in range(K):
-                G = self.build_graph(Graph(), self.graph_repn_nodes_K[k][-1])
-                # if showing:
-                G.draw(tree_log_probabilities[k])
+                if tree == trees[k]:
+                    tree_probabilities[i] += weights_KxNm1[k,-1]
+            tree_probabilities[i] /= K
+        # plt.hist(tree_probabilities)
+        # plt.xlabel('Posterior probability')
+        # plt.ylabel('Number of generated trees')
+        # plt.show()
+        np.savetxt('tree_prob.csv', tree_probabilities, delimiter=',')
+        print(weights_KxNm1)
+        #print(tree_probabilities)
+        selected_idx = tree_probabilities.index(max(tree_probabilities))
+        print(trees[selected_idx])
+        
+        # pdb.set_trace()
+        G = self.build_graph(Graph(), self.graph_repn_nodes_K[selected_idx][-1])
+        if showing:
+            G.draw(tree_probabilities[selected_idx])
 
-        else:
-            G = -1
-
-        return jump_chain_KxN, log_weights_KxNm1, G, tree_log_probabilities
+        return log_weights_KxNm1, tree_probabilities, G
 
 
 if __name__ == "__main__":
 
+    real_data_corona = False
+    real_data_1 = False
+    real_data_2 = True
     simulate_data = False
-    load_strings = True
+    load_strings = False
 
     alphabet = 'ACTG'
     alphabet_dir = {'A': [1, 0, 0, 0],
                     'C': [0, 1, 0, 0],
                     'T': [0, 0, 1, 0],
                     'G': [0, 0, 0, 1]}
+    alphabet_dir_l = {'a': [1, 0, 0, 0],
+                    'c': [0, 1, 0, 0],
+                    't': [0, 0, 1, 0],
+                    'g': [0, 0, 0, 1]}
+                    
 
     alphabet = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
 
     genome_strings = ['ACTTTGAGAG','ACTTTGACAG','ACTTTGACTG','ACTTTGACTC']
+    # a = ''
+    # for i in range(150):
+    #     a += 'A'
+    # genome_strings = [a,a,a,a]
 
     def simulateDNA(nsamples, seqlength, alphabet):
         genomes_NxSxA = np.zeros([nsamples, seqlength, alphabet.shape[0]])
@@ -432,10 +494,11 @@ if __name__ == "__main__":
                     'genome': genomes_NxSxA}
         return datadict
 
+    dim = 4
 
     if simulate_data:
         data_NxSxA = simulateDNA(4, 10, alphabet)
-        print("Simulated genomes:\n", data_NxSxA)
+        #print("Simulated genomes:\n", data_NxSxA)
 
         taxa = ['S' + str(i) for i in range(data_NxSxA.shape[0])]
         #print(taxa)
@@ -447,5 +510,58 @@ if __name__ == "__main__":
 
         datadict = form_dataset_from_strings(genome_strings, alphabet_dir)
 
+    if real_data_corona:
+        datadict = pd.read_pickle('tencovid.p')
+        dim = 6
+
+    if real_data_1:
+        genome_strings = \
+           ['aaccctgttatttccacatgccaacaatcccaacag',
+            'aactctgttatttccacatgccaacaatcccaacag',
+            'aaatctgtgttgtctaaatgtcagttatttcagtta',
+            'aaagctattatttaaaaatataaattatctcaatta',
+            'aacactgttatttctaaatatcacttttcccaattg']
+        datadict = form_dataset_from_strings(genome_strings, alphabet_dir_l)
+        datadict['taxa'] = ['human', 'gibbon','guinea pig', 'aardvark', 'armadillo']
+    
+    if real_data_2:
+        # Primates
+        # block 19, 20, 32, 38, 42, 45, 47, 52, 53, 54, 57, 74, 78, 89, 92, 202, 223, 228, 239, 286, 304, 309, 346
+        genome_strings = \
+           ['taatggaataacacctttgctatgttatccaaacaatattagtcctttttcttctcttgtcgcccagccagagggcaatggtgggatctcggctcactgagacctctgcctcccagttcaagttacaggcacccgccaggctggtctcgaactgctgacctcaggtgatccacccaccttggcctccgaaagtgccgggattataggcgtgagccaccgcaccacctagcttgtatcgaacaaagggaataaaaaatgtatggatcaaggctcatgtacacaagatccaaattatccaccatccaggataatattttttgg',
+            'gaatggaataacacctttgctatgttatccaaacaatattagtcctttttcttctcttgtcgcccagccagagggcaatggtgggatctccgctcactgagacctctgcctcccagttcaagttacaggcacccgccaggctggtctcgaactgctgacctcaggtgaaccacccaccttggcctccgaaagtgccgggattataggcgtgagccaccgcaccacctagcttgtatcgaacaaagggaataaaaaatgtatggatcaaggctcatgtacacaagatccaaattatccaccatccaggataatattttttgg',
+            'taatggaataacacctttgctatgttatccaaacaatattagtccttttttttctcttgtcacccagccagagggcaatggcgggatctcggctcactgagacctctgcctcccagttcaagctacaggcacccgccaggctggtcttgaactgctgacctcaggtgatccacccaccttggcctccaaaagtgccgggattataggtgtgagccaccgcaccacctagcttgtatcgaactaagggaataaaaaatgtatggatcaaggctcatgtacacaagatccaaattatccaccatccaggataatatttttcgg',
+            'taatggaataacacctttgctatgttatccaaacaatattagtcctattttttctcttgtcacccagccagagggcaatggtgggatctcggctcactgcgacctctgcctcccagttcaagctacaggcacccgccaggctgggctccaactgctgacctcaggtgatccacccatcttggcctccgaaagtgccgggattacaggcgtgagccaccgcactgcctagtttgtatcgaacaaagggaatataaaatgtatgattcaaggctcatgtacacaagatccaaattatcccccatccaggatagtattttacgg',
+            'taatggaataacacctttgctatgttattcaaacaatattagtcctattttttctcttgttgcccagctggagggcaatggcgggatctcggctcgctgccacctctgcctcccagttcaggctacaggcacctgccatgctgttcctgaactgctgacctcaggtgatccacctaccttggcctccaaaagtgccgggattacaggcgtgagccaccgcactgcctagtttgtattgaacaaagggaatataaaatgtatgaatcaaggctcatgtacacaagatccaaattatccaccatccaggataatattttatgg',
+            'taacagaataacacctttactatgttatctaaataatatttgtcctattttttctcttgtcacccagctggaaagcaatggcgggacctcagctcactgcaacctctgcctcccagttcaagctataggcatctgccaggctggtctcgaactgctgacctcaggtgatccacccgccttggcctcccaaagcgctgggattgtaggcatgagccaccccgccacctagtttgtatagaatataggagatacaaaatgtatgaatcaaggctgacgtatacacgatccaaattatcccccacccaggacaatattttctga',
+            'taacagaataacacctttgctatgttatctaaataatatttgtcctattttttctcttgtcacccagctggaaagcaatggcgggacctcagctcactgcaacctctgcctcccagttcaagctacaggcatctgccaggctggtctcgaactgctgacctcaggtgatccacccgccttggcctcccaaagcgctgggattgtaggcatgagccaccccgccacctagtttgtatagaatataggagatacaaaatgtatgaatcaaggctgacgtatacacgatccaaattatcccccacccaggacaatattttctga',
+            'taacagaataacacttttgctatgttatctaaataatatttgtcctatttcttctcttgtcgcccagctggaaggcaatggcgggacctcagctcactgcaacctctgcctcccagttcaagctacaggcatctgccaggctggtctagaactgctgacctcaggtgatccacccgccttggcctcccaaagtgctggaattgcaggcatgagccaccccgccacctagtttgtatagaatataggagatacaaaatgtatgaatcaaggctgacgtccacacgatccaaattatcccccacccaggacaatattttctga',
+            'taacagaataacacctttgctatgttatctaaataatatttgtcctattttttctcttgtcgcccagctggtgggcaatggcggaatctcggctcaatgcaacctctgcctcccagttcaagctacaggcatctgtcaggctggtctcaaactgctgacctcaggtgatccacccgccttggcctcccaaagtgctgggattacaggcacgacccaccccgccacctagtttgtatagaatagaggagatacaaaatgtatgaatccaggctgacgtacacacgatccaaattatcccccacccaggacaatattttctga']
+        datadict = form_dataset_from_strings(genome_strings, alphabet_dir_l)
+        datadict['taxa'] = ['human','chimp','gorilla','oranguta','gibbon','rhesus','macaque','baboon','greenmonkey']
+        
+
     csmc = CSMC(datadict)
-    chain, log_weights, G, tree_probs = csmc.sample_phylogenies(100, resampling=True)
+
+    if dim==6:
+        csmc.Qmatrix = np.array([[-5.,1.,1.,1.,1.,1.],
+                                 [1.,-5.,1.,1.,1.,1.],
+                                 [1.,1.,-5.,1.,1.,1.],
+                                 [1.,1.,1.,-5.,1.,1.],
+                                 [1.,1.,1.,1.,-5.,1.],
+                                 [1.,1.,1.,1.,1.,-5.]])/4
+        csmc.Pmatrix = spl.expm(csmc.Qmatrix)
+        csmc.prior = np.ones(csmc.Qmatrix.shape[0])/csmc.Qmatrix.shape[0]
+
+    log_weights, tree_probs, G = csmc.sample_phylogenies(20000, resampling=False, showing=True)
+
+
+
+
+
+
+
+
+
+
+
