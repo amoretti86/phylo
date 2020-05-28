@@ -3,6 +3,8 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 import pdb
 
+tf.reset_default_graph()
+
 class Node:
 
     def __init__(self, id=None, data=None):
@@ -21,11 +23,11 @@ class BeliefProp:
         BeliefProp object initializes the Q matrix as a tf variable as well as the distribution over branch lengths
         Root node is passed in as input which implicitly specifies the topology of the graph
         """
-        self.Q = tf.Variable(Q, dtype=tf.float32, name="Q_matrix")
+        self.Q = tf.Variable(Q, dtype=tf.float64, name="Q_matrix")
         self.root = root
         self.K = Q.shape[0]
         self.lognorm = tfp.distributions.LogNormal(loc=1, scale=0.5, validate_args=False, allow_nan_stats=True, name='LogNorm')
-        self.prior = tf.Variable(np.expand_dims(np.ones(self.K), axis=0)/self.K, dtype=tf.float32, name='prior')
+        self.prior = tf.Variable(np.expand_dims(np.ones(self.K), axis=0)/self.K, dtype=tf.float64, name='prior')
         self.learning_rate = 0.001
         self.n = len(datadict['taxa'])
         self.taxa = datadict['taxa']
@@ -52,7 +54,7 @@ class BeliefProp:
                 q.append(curr.right)
             if (isInternal):
                 internal_nodes.append(curr)
-                curr.data = tf.Variable(np.expand_dims(np.ones(self.K),axis=0)/self.K, dtype=tf.float32, name=curr.id)
+                #curr.data = tf.Variable(np.expand_dims(np.ones(self.K),axis=0)/self.K, dtype=tf.float64, name=curr.id)
         return internal_nodes[::-1]
 
     def conditional_likelihood(self, node):
@@ -77,12 +79,36 @@ class BeliefProp:
 
     def create_likelihood_loss(self):
         """
-        Form the loss function by passing messages from leaf nodes to root and defined cost as negative tree liklihood
+        Form the loss function by passing messages from leaf nodes to root and defined cost as negative tree likelihood
         """
         self.pass_messages()
         self.tree_likelihood = tf.matmul(self.root.data, self.prior, transpose_b=True)
         self.cost = - self.tree_likelihood
         self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+
+    def naive_conditional_likelihood(self, node, left, right):
+        """
+        Numpy data is passed into the function. Feed_dict and placeholder only used when evaluating likelihood.
+        """
+        left_p_matrix  = tf.linalg.expm(self.Q * node.left_branch)
+        right_p_matrix = tf.linalg.expm(self.Q * node.right_branch)
+        left_lik  = tf.matmul(left, left_p_matrix)
+        right_lik = tf.matmul(right, right_p_matrix)
+        lik = left_lik * right_lik
+        return lik
+
+    def node_conditional_likelihood(self, node):
+        """
+        Numpy data is accessed within the function. Feed_dict and placeholder only used when evaluating likelihood.
+        """
+        left  = np.expand_dims(self.genome_NxSxA[self.taxa.index(node.left.id)][0],axis=0)
+        right = np.expand_dims(self.genome_NxSxA[self.taxa.index(node.right.id)][0],axis=0)
+        left_p_matrix  = tf.linalg.expm(self.Q * node.left_branch)
+        right_p_matrix = tf.linalg.expm(self.Q * node.right_branch)
+        left_lik  = tf.matmul(left, left_p_matrix)
+        right_lik = tf.matmul(right, right_p_matrix)
+        lik = left_lik * right_lik
+        return lik
 
     def train(self):
         """
@@ -94,10 +120,55 @@ class BeliefProp:
         with tf.Session() as sess:
             sess.run(init)
             node = self.internal_nodes[0]
+
+
+            # This works. The numpy data is passed into the function. The placeholder is used at evaluation.
+            left_data  = np.expand_dims(self.genome_NxSxA[self.taxa.index(node.left.id)][0], axis=0)
+            right_data = np.expand_dims(self.genome_NxSxA[self.taxa.index(node.right.id)][0],axis=0)
+
+            cond_lik = self.naive_conditional_likelihood(node, left_data, right_data)
+            print(sess.run(cond_lik, feed_dict={tf.placeholder(dtype=tf.float64, shape=(1, 3)): left_data,
+                                      tf.placeholder(dtype=tf.float64, shape=(1, 3)): right_data}))
+
+
+            # This also works. Numpy data is accessed within the function. Placeholder is not used at all.
+            node_like = self.node_conditional_likelihood(node)
+            print(sess.run(node_like))
+            # However, the above assumes that the children of the node passed in are leaf nodes. May not work for cost.
+
+
+
+            # This does not work. Strangely, node.left.data and node.right.data are tf.tensors?
+            # This is probably why there is a bug...
             likelihood = self.conditional_likelihood(node)
-            # Bug in the following...
-            print(sess.run(likelihood), feed_dict={node.left.data: self.genome_NxSxA[self.taxa.index(node.left.id)][0],
-                                                   node.right.data: self.genome_NxSxA[self.taxa.index(node.right.id)][0]})
+            print(sess.run(likelihood, feed_dict={tf.placeholder(dtype=tf.float64, shape=(1, 3), name='node_A'):
+                                                      np.expand_dims(
+                                                          self.genome_NxSxA[self.taxa.index(node.left.id)][0], axis=0),
+                                                  tf.placeholder(dtype=tf.float64, shape=(1, 3), name='node_B'):
+                                                      np.expand_dims(
+                                                          self.genome_NxSxA[self.taxa.index(node.right.id)][0],
+                                                          axis=0)}))
+            # This is wrong. Bug in the following...
+            if False:
+
+                print(sess.run(likelihood), feed_dict={node.left.data : np.expand_dims(self.genome_NxSxA[self.taxa.index(node.left.id)][0],axis=0),
+                                                       node.right.data: np.expand_dims(self.genome_NxSxA[self.taxa.index(node.right.id)][0],axis=0)})
+
+
+            for i in range(100):
+                _, c = sess.run([self.optimizer, self.cost],
+                                feed_dict={tf.placeholder(dtype=tf.float64, shape=(1, 3)):
+                                               np.expand_dims(np.array([0., 1., 0.]),axis=0),
+                                           tf.placeholder(dtype=tf.float64, shape=(1, 3)):
+                                               np.expand_dims(np.array([0., 0., 1.]),axis=0),
+                                           tf.placeholder(dtype=tf.float64, shape=(1, 3)):
+                                               np.expand_dims(np.array([0., 0., 1.]),axis=0),
+                                           tf.placeholder(dtype=tf.float64, shape=(1, 3)):
+                                               np.expand_dims(np.array([1., 0., 0.]),axis=0),
+                                           tf.placeholder(dtype=tf.float64, shape=(1, 3)):
+                                               np.expand_dims(np.array([1., 0., 0.]),axis=0),
+                                           tf.placeholder(dtype=tf.float64, shape=(1, 3)):
+                                               np.expand_dims(np.array([0., 1., 0.]),axis=0)})
 
             for i in range(100):
                 _, c = sess.run([self.optimizer, self.cost],
@@ -122,31 +193,56 @@ if __name__ == '__main__':
     data_dict = {'taxa': taxa, 'genome': genome_NxSxA}
     Qmatrix = np.array([[-2.,1.,1.], [1.,-2.,1.], [1.,1.,-2.]])
 
+    """
     root = Node('5')
     root.left = Node('4')
-    root.right = Node('F', tf.placeholder(dtype=tf.float32, shape=(1, 3)))
+    root.right = Node('F')
     root.left.left = Node('3')
     root.left.right = Node('2')
-    root.left.right.left = Node('D', tf.placeholder(dtype=tf.float32, shape=(1, 3)))
-    root.left.right.right = Node('E', tf.placeholder(dtype=tf.float32, shape=(1, 3)))
+    root.left.right.left = Node('D')
+    root.left.right.right = Node('E')
     root.left.left.left = Node('1')
-    root.left.left.right = Node('C', tf.placeholder(dtype=tf.float32, shape=(1, 3)))
-    root.left.left.left.left = Node('A', tf.placeholder(dtype=tf.float32, shape=(1, 3)))
-    root.left.left.left.right = Node('B', tf.placeholder(dtype=tf.float32, shape=(1, 3)))
+    root.left.left.right = Node('C')
+    root.left.left.left.left = Node('A')
+    root.left.left.left.right = Node('B')
+    """
+    root = Node('5')
+    root.left = Node('4')
+    root.right = Node('F', tf.placeholder(dtype=tf.float64, shape=(1, 3), name='node_F_data'))
+    root.left.left = Node('3')
+    root.left.right = Node('2')
+    root.left.right.left = Node('D', tf.placeholder(dtype=tf.float64, shape=(1, 3), name='node_D_data'))
+    root.left.right.right = Node('E', tf.placeholder(dtype=tf.float64, shape=(1, 3), name='node_E_data'))
+    root.left.left.left = Node('1')
+    root.left.left.right = Node('C', tf.placeholder(dtype=tf.float64, shape=(1, 3), name='node_C_data'))
+    root.left.left.left.left = Node('A', tf.placeholder(dtype=tf.float64, shape=(1, 3), name='node_A_data'))
+    root.left.left.left.right = Node('B', tf.placeholder(dtype=tf.float64, shape=(1, 3), name='node_B_data'))
+    
+    """
+    root = Node('5')
+    root.left = Node('4')
+    root.right = Node('F', tf.constant(np.expand_dims(np.array([0., 1., 0.]),axis=0), name = 'node_F_data', dtype=tf.float64))
+    root.left.left = Node('3')
+    root.left.right = Node('2')
+    root.left.right.left = Node('D', tf.constant(np.expand_dims(np.array([0., 0., 1.]),axis=0), name='node_D_data', dtype=tf.float64))
+    root.left.right.right = Node('E', tf.constant(np.expand_dims(np.array([1., 0., 0.]),axis=0), name='node_E_data', dtype=tf.float64))
+    root.left.left.left = Node('1')
+    root.left.left.right = Node('C', tf.constant(np.expand_dims(np.array([1., 0., 0.]),axis=0), name='node_C_data', dtype=tf.float64))
+    root.left.left.left.left = Node('A', tf.constant(np.expand_dims(np.array([1., 0., 0.]),axis=0), name='node_A_data', dtype=tf.float64))
+    root.left.left.left.right = Node('B', tf.constant(np.expand_dims(np.array([0., 1., 0.]),axis=0), name='Node_B_data', dtype=tf.float64))
+    """
 
-    root.left_branch = tf.Variable(0.5,dtype=tf.float32)
-    root.right_branch = tf.Variable(2.5,dtype=tf.float32)
-    root.left.left_branch = tf.Variable(1.0,dtype=tf.float32)
-    root.left.right_branch = tf.Variable(2.0,dtype=tf.float32)
-    root.left.right.left_branch = tf.Variable(0.5,dtype=tf.float32)
-    root.left.right.right_branch = tf.Variable(0.5,dtype=tf.float32)
-    root.left.left.left_branch = tf.Variable(0.5,dtype=tf.float32)
-    root.left.left.right_branch = tf.Variable(1.5,dtype=tf.float32)
-    root.left.left.left.left_branch = tf.Variable(1.0,dtype=tf.float32)
-    root.left.left.left.right_branch = tf.Variable(1.0,dtype=tf.float32)
-
-    myleft = np.expand_dims(np.array([1., 0., 0.]), axis=0)
-    myright = np.expand_dims(np.array([0., 1., 0.]), axis=0)
+    root.left_branch = tf.Variable(0.5,dtype=tf.float64)
+    root.right_branch = tf.Variable(2.5,dtype=tf.float64)
+    root.left.left_branch = tf.Variable(1.0,dtype=tf.float64)
+    root.left.right_branch = tf.Variable(2.0,dtype=tf.float64)
+    root.left.right.left_branch = tf.Variable(0.5,dtype=tf.float64)
+    root.left.right.right_branch = tf.Variable(0.5,dtype=tf.float64)
+    root.left.left.left_branch = tf.Variable(0.5,dtype=tf.float64)
+    root.left.left.right_branch = tf.Variable(1.5,dtype=tf.float64)
+    root.left.left.left.left_branch = tf.Variable(1.0,dtype=tf.float64)
+    root.left.left.left.right_branch = tf.Variable(1.0,dtype=tf.float64)
 
     model = BeliefProp(Qmatrix, root, data_dict)
     model.train()
+
