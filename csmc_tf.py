@@ -150,6 +150,7 @@ class CSMC:
         self.leaf_nodes = []
 
     def get_Q(self, pi_c, pi_g, pi_t, kappa):
+        # returns Qmatrix with entries defined by these four tf.Variables
         A1 = tf.stack([-pi_c-kappa*pi_g-pi_t, pi_c, kappa*pi_g, pi_t], axis=0)
         A2 = tf.stack([1-pi_c-pi_g-pi_t, -1+pi_c+pi_t-kappa*pi_t, pi_g, kappa*pi_t], axis=0)
         A3 = tf.stack([kappa*(1-pi_c-pi_g-pi_t), pi_c, -kappa*(1-pi_c-pi_g-pi_t)-pi_c-pi_t, pi_t], axis=0)
@@ -240,26 +241,6 @@ class CSMC:
         # Make sure that node ordering is such that any child is placed before its parent
         return nodes[::-1]
 
-    def get_leaf_nodes(self,root):
-        q = []
-        q.append(root)
-        leaf_nodes = []
-        while (len(q)):
-            curr = q[0]
-            q.pop(0)
-            is_leaf = 0
-            if not (curr.left):
-                is_leaf = 1
-            else:
-                q.append(curr.left)
-            if not (curr.right):
-                is_leaf = 1
-            else:
-                q.append(curr.right)
-            if (is_leaf):
-                leaf_nodes.append(curr)
-        return leaf_nodes
-
     def resample(self, weights, jump_chain_K, i):
         """
         Resamples partial states (particles) based on importance weights
@@ -303,7 +284,7 @@ class CSMC:
         jump_chain_KxN[j,i+1][0].remove(particle2)
         jump_chain_KxN[j,i+1][0].append(particle_coalesced)
 
-        # Sample from branch length proposal
+        # Branch length as tf.Variable to be optimized
         bl1 = tf.Variable(1, dtype=tf.float64)
         bl2 = tf.Variable(1, dtype=tf.float64)
 
@@ -320,7 +301,6 @@ class CSMC:
     def conditional_likelihood(self, node):
         #pdb.set_trace()
         # Computes the conditional likelihood using the formula above
-        # Matrix exponentiation here is probably inefficient
         left_Pmatrix = tf.linalg.expm(self.Qmatrix * node.left_branch)
         right_Pmatrix = tf.linalg.expm(self.Qmatrix * node.right_branch)
         left_prob = tf.matmul(node.left.data, left_Pmatrix)
@@ -344,6 +324,7 @@ class CSMC:
     	return 1/rho
 
     def get_tree_prob(self, vertex_dicts, weights_KxNm1, K):
+        # This method is not currently used
         trees = []
         for dic in vertex_dicts:
             trees.append(dic.keys())
@@ -360,6 +341,7 @@ class CSMC:
         return tree_probabilities, trees
 
     def compute_norm(self, weights_KxNm1):
+        # Computes norm, which is negative of our final cost
         norm = tf.reduce_prod(1/K*tf.reduce_sum(weights_KxNm1, axis=0))
         return norm
 
