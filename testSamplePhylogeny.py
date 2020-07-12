@@ -106,6 +106,7 @@ def sample_phylogenies(datadict, K, resampling=True, showing=True):
     #jump_chain_KxN = np.array([jump_chain] * K)  # KxN matrix of jump_chain dictionaries
 
     JC_K = [taxa] * K
+    print(JC_K)
     JumpChainTensor = tf.Variable(JC_K, name='JumpChainK')
 
     log_weights_KxNm1 = np.zeros([K, n - 1])
@@ -150,19 +151,19 @@ def sample_phylogenies(datadict, K, resampling=True, showing=True):
         if r > 2:
             p1,p2,pc,q,JumpChainTensor = extend_partial_state(JumpChainTensor,K,r)
         elif r == 2:
-            #p1,p2,pc,q,JumpChainTensor = form_final_state(JumpChainTensor)
+            p1,p2,pc,q,JumpChainTensor = form_final_state(JumpChainTensor)
             print("Extended JumpChainTensor:\n", JumpChainTensor)
-            pdb.set_trace()
+            #pdb.set_trace()
 
 
         #for k in range(K):
             #jctmp = tf.stack([jctmp, jc])
 
-            if testExtend and i > 1:
-                with tf.Session() as sess:
-                    sess.run(tf.global_variables_initializer())
-                    print("Jump Chain Tensor:\n", sess.run(JumpChainTensor))
-                    print("oh yeah...")
+        if False:
+            with tf.Session() as sess:
+                sess.run(tf.global_variables_initializer())
+                print("Jump Chain Tensor:\n", sess.run(JumpChainTensor))
+                print("oh yeah...")
 
             #vertex_dicts_laststep = deepcopy(vertex_dicts)
         print('Computation in progress: step ' + str(i + 1))
@@ -252,6 +253,7 @@ if __name__ == "__main__":
 
 
     dd = form_dataset_from_strings(genome_strings, alphabet_dir)
+    print(dd['taxa'])
     pdb.set_trace()
 
     #log_weights, tree_prob, norm, G = sample_phylogenies(dd, 10)
