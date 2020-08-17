@@ -3,9 +3,11 @@ An implementation of the Combinatorial Sequential Monte Carlo algorithm
 for Phylogenetic Inference
 """
 
+# Version 5; removes Vertex class, changes much of the architecture
+
 import numpy as np
 import random
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 import tensorflow_probability as tfp
 from scipy.stats import lognorm
 import scipy.linalg as spl
@@ -20,108 +22,13 @@ from networkx.drawing.nx_agraph import graphviz_layout
 from functools import reduce
 
 
-class Node:
-    """
-    Defines a Node object for visualizing phylogeny
-    """
-
-    def __init__(self, data):
-        # Subedges must be a list of edges (or empty list)
-        self.data = data
-        self.subnodes = []
-        self.parent = None
-        self.edge_before = ''
-
-    def del_subnodes(self, d):
-        for n in self.subnodes:
-            if n.data == d:
-                self.subnodes.remove(n)
-
-    def print_node(self):
-        s = 'Node ' + self.data + ' with subnodes: '
-        for n in self.subnodes:
-            s += n.data + ' '
-        s += '; edge before is ' + self.edge_before
-        print(s)
-
-
-class Vertex:
-
-    def __init__(self, id=None, data=None):
-        self.id = id
-        self.data = data
-        self.left = None
-        self.right = None
-        self.left_branch = None
-        self.right_branch = None
-        self.is_root = True
-        self.data_done = False
-
-
-class Graph:
-    """
-    Defines a Graph object for visualizing phylogeny
-    """
-
-    def __init__(self):
-        self.node_dict = {}
-        self.num_nodes = 0
-
-    def add_node(self, node):
-        self.num_nodes += 1
-        self.node_dict[node.data] = node
-        return node
-
-    def get_node(self, data):
-        if data in self.node_dict:
-            return self.node_dict[data]
-        else:
-            return None
-
-    def del_node(self, data):
-        try: 
-            for d in self.node_dict:
-                node = self.get_node(d)
-                node.del_subnodes(data)
-            del self.node_dict[data]
-            self.num_nodes -= 1
-            return None
-        except KeyError:
-            raise Exception("Node %s does not exist" % data)
-
-    def contains(self, data):
-        return data in self.node_dict
-
-    def get_nodes(self):
-        return list(self.node_dict.values())
-
-    def get_nodes_data(self):
-        return list(self.node_dict.keys())
-
-    # For visualizations
-    def build_nx_graph(self):
-        # Add nodes and edges to build graph
-        G_nx = nx.DiGraph()
-        for key in self.get_nodes_data():
-            G_nx.add_node(key)
-        for node in self.get_nodes():
-            for subnode in node.subnodes:
-                G_nx.add_edge(node.data, subnode.data)
-        return G_nx
-
-    def draw(self, prob):
-        # plotting tools. Not used here.
-        G_nx = self.build_nx_graph()
-        plt.figure(figsize=(10,10))
-        pos = nx.kamada_kawai_layout(G_nx)
-        nx.draw_networkx(G_nx, pos=pos, with_labels=True, fontsize=4,width=3.8,node_color='r',edge_color='brown')
-        plt.title("Sampled Geneaology", fontsize=14)
-        plt.xlabel("Prob %1.5f " % prob)
-        plt.show()
-
-    def __iter__(self):
-        return iter(self.node_dict.values())
-
+#@staticmethod
+def ncr(n, r):
+    # Compute combinatorial term n choose r
+    r = min(r, n-r)
+    numer = reduce(op.mul, range(n, n-r, -1), 1)
+    denom = reduce(op.mul, range(1, r+1), 1)
+    return numer/denom
 
 
 class CSMC:
@@ -136,18 +43,16 @@ class CSMC:
         self.genome_NxSxA = datadict['genome']
         self.n = len(datadict['taxa'])
         self.s = len(self.genome_NxSxA[0])
-        self.pi_c = tf.Variable(0.25, dtype=tf.float64, name="pi_c", constraint=lambda x: tf.clip_by_value(x, 0, 1))
-        self.pi_g = tf.Variable(0.25, dtype=tf.float64, name="pi_g", constraint=lambda x: tf.clip_by_value(x, 0, 1))
-        self.pi_t = tf.Variable(0.25, dtype=tf.float64, name="pi_t", constraint=lambda x: tf.clip_by_value(x, 0, 1-self.pi_c-self.pi_g))
+        # self.pi_c = tf.Variable(0.25, dtype=tf.float64, name="pi_c", constraint=lambda x: tf.clip_by_value(x, 0, 1))
+        # self.pi_g = tf.Variable(0.25, dtype=tf.float64, name="pi_g", constraint=lambda x: tf.clip_by_value(x, 0, 1))
+        # self.pi_t = tf.Variable(0.25, dtype=tf.float64, name="pi_t", constraint=lambda x: tf.clip_by_value(x, 0, 1-self.pi_c-self.pi_g))
+        self.pi_c = tf.constant(0.25, dtype=tf.float64)
+        self.pi_g = tf.constant(0.25, dtype=tf.float64)
+        self.pi_t = tf.constant(0.25, dtype=tf.float64)
         self.kappa = tf.Variable(2., dtype=tf.float64, name="kappa")
         self.Qmatrix = self.get_Q(self.pi_c,self.pi_g,self.pi_t,self.kappa)
-        # self.Qmatrix = np.array([[-3.,1.,1.,1.],
-        #                          [1.,-3.,1.,1.],
-        #                          [1.,1.,-3.,1.],
-        #                          [1.,1.,1.,-3.]])
         self.Pmatrix = tf.linalg.expm(self.Qmatrix)
         self.state_probs = tf.stack([[1-self.pi_c-self.pi_g-self.pi_t, self.pi_c, self.pi_g, self.pi_t]], axis=0)
-        self.leaf_nodes = []
 
     def get_Q(self, pi_c, pi_g, pi_t, kappa):
         # returns Qmatrix with entries defined by these four tf.Variables
@@ -158,328 +63,189 @@ class CSMC:
         Q = tf.stack((A1,A2,A3,A4), axis=0)
         return Q
 
-    #@staticmethod
-    def ncr(self, n, r):
-        # Compute combinatorial term n choose r
-        r = min(r, n-r)
-        numer = reduce(op.mul, range(n, n-r, -1), 1)
-        denom = reduce(op.mul, range(1, r+1), 1)
-        return numer/denom
-
-    #@staticmethod
-    def sort_string(self, s):
-        lst = s.split('+')
-        lst = sorted(lst)
-        result = '+'.join(lst)
-        return result
-
-    def build_tree(self, particle1, particle2, particle_coalesced, j):
+    def resample(weights_KxNm1, JC_K, i, K, debug=False):
         """
-        Updates two lists graph_repn_data_K and graph_repn_nodes_K
-        that are needed to plot a phylogeny using the Graph object
+        Resample partial states by drawing from a categorical distribution whose parameters are normalized importance weights
+        JumpChain (JC_K) is a tensor formed from a numpy array of lists of strings, returns a resampled JumpChain tensor
         """
+        indices = tf.random.categorical(tf.math.log(tf.expand_dims(weights_KxNm1[:, i] / tf.reduce_sum(weights_KxNm1[:, i], axis=0), axis=0)), K)
+        resampled_tensor = tf.gather(JC_K, tf.squeeze(indices))
+        if debug:
+            with tf.Session() as sess:
+                sess.run(tf.global_variables_initializer())
+                print("Jump Chain Tensor:\n", sess.run(resampled_tensor))
+                print("OH YEAH!")
+        return resampled_tensor
+
+    def extend_partial_state(self, JCK, debug=False):
+        """
+        Extends partial state by sampling two states to coalesce (Gumbel-max trick to sample without replacement)
+        JumpChain (JC_K) is a tensor formed from a numpy array of lists of strings, returns a new JumpChain tensor
+        """
+        # Compute combinatorial term
         #pdb.set_trace()
-        n3 = Node(particle_coalesced)
-        if particle1 not in self.graph_repn_data_K[j]:
-            n1 = Node(particle1)
-            self.graph_repn_data_K[j].append(particle1)
-            self.graph_repn_nodes_K[j].append(n1)
-        else:
-            n1 = self.graph_repn_nodes_K[j][self.graph_repn_data_K[j].index(particle1)]
-        n1.parent = n3
-        n3.subnodes.append(n1)
-        if particle2 not in self.graph_repn_data_K[j]:
-            n2 = Node(particle2)
-            self.graph_repn_data_K[j].append(particle2)
-            self.graph_repn_nodes_K[j].append(n2)
-        else:
-            n2 = self.graph_repn_nodes_K[j][self.graph_repn_data_K[j].index(particle2)]
-        n2.parent = n3
-        n3.subnodes.append(n2)
-        self.graph_repn_data_K[j].append(particle_coalesced)
-        self.graph_repn_nodes_K[j].append(n3)
+        q = 1 / ncr(JCK.shape[1],2)
+        #K = JCK.shape[0]
+        #n = JCK.shape[1]
+        #data = np.arange(0, (JCK.shape[1].value - 1) * JCK.shape[0].value, 1).reshape(JCK.shape[0].value, JCK.shape[1].value - 1) % (JCK.shape[1].value - 1)
+        data = np.arange(0, (JCK.shape[1].value) * JCK.shape[0].value, 1).reshape(JCK.shape[0].value,JCK.shape[1].value) % (JCK.shape[1].value)
+        data = tf.constant(data, dtype=tf.int32)
+        data = tf.cast(data, dtype=tf.float32)
+        # Gumbel-max trick to sample without replacement
+        z = -tf.math.log(-tf.math.log(tf.random.uniform(tf.shape(data), 0, 1)))
+        top_values, coalesced_indices = tf.nn.top_k(data + z, 2)
+        bottom_values, remaining_indices = tf.nn.top_k(tf.negative(data + z), JCK.shape[1].value - 2)
+        JC_keep = tf.gather(tf.reshape(JCK, [JCK.shape[0].value*(JCK.shape[1].value)]), remaining_indices)
+        particles = tf.gather(tf.reshape(JCK, [JCK.shape[0].value*(JCK.shape[1].value)]), coalesced_indices)
+        particle1 = particles[:, 0]
+        particle2 = particles[:, 1]
+        # Form new state
+        particle_coalesced = particle1 + '+' + particle2
+        # Form new Jump Chain
+        JCK = tf.concat([JC_keep, tf.expand_dims(particle_coalesced, axis=1)], axis=1)
 
-    def build_graph(self, G, master_node):
-        """
-        Constructs a graph for visualizing phylogeny
-        """
-        if master_node.subnodes == []:
-            G.add_node(master_node)
-            return G
+        return particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, q, JCK
 
-        G.add_node(master_node)
-
-        for n in master_node.subnodes:
-            G = self.build_graph(G, n)
-
-        return G
-
-    def get_internal_nodes(self,root):
-        """
-        Collects all internal nodes (ancestral or latent variables) for likelihood computation
-        May not be necessary...
-        """
+    def conditional_likelihood(self, l_data, r_data, l_branch, r_branch):
         #pdb.set_trace()
-        q = []
-        q.append(root)
-        nodes = []
-        while (len(q)):
-            curr = q[0]
-            q.pop(0)
-            isInternal = 0
-            if (curr.left):
-                isInternal = 1
-                if not curr.left.data_done:
-                    q.append(curr.left)
-            if (curr.right):
-                isInternal = 1
-                if not curr.left.data_done:
-                    q.append(curr.right)
-            if (isInternal):
-                nodes.append(curr)
-                # print(curr.id, end = " ")
-        # Make sure that node ordering is such that any child is placed before its parent
-        return nodes[::-1]
-
-    def resample(self, weights, jump_chain_K, i):
-        """
-        Resamples partial states (particles) based on importance weights
-        """
-        #pdb.set_trace()
-        K = weights.shape[0]
-        importance_weights = np.exp(weights[:,i])
-        norm = np.sum(importance_weights)
-        indices = np.random.choice(K, K, p = importance_weights/norm, replace=True)
-        jump_chain_K = jump_chain_K[indices]
-        return jump_chain_K
-
-    #@staticmethod
-    def create_node_sampler(self, jump_chain, i):
-        """
-        This defines the sample space of nodes at which coalescent events can happen.
-        The sample space is defined in the list variable 'result'
-        REVISIT ME. This is no longer necessary...
-        """
-        result = []
-        for key in jump_chain[i]:
-            if len(jump_chain[i][key]) > 1:
-                for p in range(len(jump_chain[i][key])):
-                    result.append(key)
-        return result
-
-    def extend_partial_state(self, jump_chain_KxN, j, i):
-        """
-        Forms a partial state by sampling two nodes from the proposal distribution
-        """
-        # Set c[n-1] = c[n], copying our dictionary representing the particle set
-        jump_chain_KxN[j, i + 1] = deepcopy(jump_chain_KxN[j, i])
-
-        # Sample two posets
-        sample = random.sample(jump_chain_KxN[j,i][0], 2)
-        q2 = 1 / self.ncr(len(jump_chain_KxN[j,i][0]), 2)
-        particle1 = sample[0]
-        particle2 = sample[1]
-        particle_coalesced = self.sort_string(particle1 + '+' + particle2)
-        jump_chain_KxN[j,i+1][0].remove(particle1)
-        jump_chain_KxN[j,i+1][0].remove(particle2)
-        jump_chain_KxN[j,i+1][0].append(particle_coalesced)
-
-        # Branch length as tf.Variable to be optimized
-        bl1 = tf.Variable(1, dtype=tf.float64)
-        bl2 = tf.Variable(1, dtype=tf.float64)
-
-        return particle1, particle2, particle_coalesced, bl1, bl2, q2, jump_chain_KxN
-
-    def pass_messages(self,internal_nodes):
-        #pdb.set_trace()
-        # Pass messages from leaf nodes to root
-        for node in internal_nodes:
-            if not node.data_done:
-                node.data = self.conditional_likelihood(node)
-                node.data_done = True
-
-    def conditional_likelihood(self, node):
-        #pdb.set_trace()
-        # Computes the conditional likelihood using the formula above
-        left_Pmatrix = tf.linalg.expm(self.Qmatrix * node.left_branch)
-        right_Pmatrix = tf.linalg.expm(self.Qmatrix * node.right_branch)
-        left_prob = tf.matmul(node.left.data, left_Pmatrix)
-        right_prob = tf.matmul(node.right.data, right_Pmatrix)
+        left_Pmatrix = tf.linalg.expm(self.Qmatrix * l_branch)
+        right_Pmatrix = tf.linalg.expm(self.Qmatrix * r_branch)
+        left_prob = tf.matmul(l_data, left_Pmatrix)
+        right_prob = tf.matmul(r_data, right_Pmatrix)
         likelihood = tf.multiply(left_prob, right_prob)
         return likelihood
 
-    def compute_log_conditional_likelihood(self, v):
+    def compute_tree_likelihood(self, data):
         #pdb.set_trace()
-        internal_nodes = self.get_internal_nodes(v)
-        self.pass_messages(internal_nodes)
-        tree_likelihood = tf.matmul(self.state_probs, v.data, transpose_b=True)
+        tree_likelihood = tf.matmul(self.state_probs, data, transpose_b=True)
         loglik = tf.reduce_sum(tf.log(tree_likelihood))
         return loglik
 
-    def overcounting_correct(self, vertex_dict):
-    	rho = 0
-    	for key in vertex_dict:
-    		if vertex_dict[key].is_root and vertex_dict[key].left is not None:
-    			rho += 1
-    	return 1/rho
+    def overcounting_correct(self, v, indices, i):
+        idx1 = tf.gather(indices, 0)
+        idx2 = tf.gather(indices, 1)
+        threshold = self.n-i-1
+        cond_greater = tf.cond(tf.logical_and(idx1 > threshold, idx2 > threshold), lambda:-1, lambda:0)
+        result = tf.cond(tf.logical_and(idx1 < threshold, idx2 < threshold), lambda:1, lambda:cond_greater)
 
-    def get_tree_prob(self, vertex_dicts, weights_KxNm1, K):
-        # This method is not currently used
-        trees = []
-        for dic in vertex_dicts:
-            trees.append(dic.keys())
-        tree_probabilities = []
-        for i in range(len(trees)):
-            tree = trees[i]
-            tree_probabilities.append(0)
-            for k in range(K):
-                if tree == trees[k]:
-                    tree_probabilities[i] += weights_KxNm1[k,-1]
-            tree_probabilities[i] /= K
-        tree_probabilities /= 1/K*sum(weights_KxNm1[:,-1])
-        tree_probabilities = list(tree_probabilities)
-        return tree_probabilities, trees
+        v = tf.add(v, result)
+        return v
 
     def compute_norm(self, weights_KxNm1):
         # Computes norm, which is negative of our final cost
+        K = len(weights_KxNm1)
         norm = tf.reduce_prod(1/K*tf.reduce_sum(weights_KxNm1, axis=0))
         return norm
 
     def sample_phylogenies(self, K, resampling=False, showing=False):
 
+        self.K = K
         n = self.n
         s = self.s
+
+        # log_weights_KxNm1 = [[0. for i in range(n-1)] for j in range(K)]
+        # weights_KxNm1 = [[1. for i in range(n-1)] for j in range(K)]
+        # log_likelihood = [[0. for i in range(n-1)] for j in range(K)]
+        # log_likelihood_tilda = [1. for j in range(K)]
+        log_weights_KxNm1 = [[0. for i in range(n-1)] for j in range(K)]
+        weights_KxNm1 = [[1. for i in range(n-1)] for j in range(K)]
+        log_likelihood = [[0. for i in range(n-1)] for j in range(K)]
+        log_likelihood_tilda = [1. for j in range(K)]
+
         # Represent a single jump_chain as a list of dictionaries
-        jump_chain = [{} for i in range(n)]
-        jump_chain[0][0] = self.taxa
-        jump_chain_KxN = np.array([jump_chain] * K) # KxN matrix of jump_chain dictionaries
-
-        log_weights_KxNm1 = [[0 for i in range(n-1)] for j in range(K)]
-        weights_KxNm1 = [[0 for i in range(n-1)] for j in range(K)]
-        log_likelihood = [[0 for i in range(n-1)] for j in range(K)]
-
-        # self.graph_repn_data_K = [[] for i in range(K)]
-        # self.graph_repn_nodes_K = [[] for i in range(K)]
-
-        vertex_dicts = [{} for k in range(K)]
-        for j in range(K):
-            for i in range(n):
-                vertex_dicts[j][self.taxa[i]] = Vertex(id=self.taxa[i],data=tf.placeholder(dtype=tf.float64, shape=(s,4)))
-                if j == 0:
-                    self.leaf_nodes.append(vertex_dicts[j][self.taxa[i]])
+        jump_chain_tensor = tf.constant([self.taxa] * K, name='JumpChainK')
+        # Keep matrices of all vertices, KxNxSxA (the coalesced children vertices will be removed as we go)
+        self.core = tf.constant(np.array([self.genome_NxSxA]*K))
+        self.left_branches = [[tf.Variable(2, dtype=tf.float64) for i in range(n-1)] for k in range(K)]
+        self.right_branches = [[tf.Variable(2, dtype=tf.float64) for i in range(n-1)] for k in range(K)]
+        v = [1 for k in range(K)] # Used for overcounting correction
 
         # Iterate over coalescent events
-        for i in range(n - 1):
-
+        for i in range(n-1):
             # Resampling step
             if resampling and i > 0:
-                jump_chain_KxN[:,i-1] = self.resample(log_weights_KxNm1, jump_chain_KxN[:,i-1], i-1)
+                jump_chain_KxN[:,i-1] = self.resample(log_weights_KxNm1, jump_chain_KxN[:,i-1], i-1, K)
+
+            # Sample from last step
+            if i > 0:
+                for k in range(K):
+                    loglik = 0
+                    idx = random.randint(0,K-1)
+                    for j in range(n-i):
+                        loglik += self.compute_tree_likelihood(tf.gather_nd(self.core, [k,j]))
+                    log_likelihood_tilda[k] = loglik
+
+            # Extend partial states
+            particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, \
+              q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor)
+
+            # Save partial set and branch length data
+            new_data = [0 for i in range(K)]
+            for k in range(K):
+                l_data = tf.gather_nd(self.core, [k,tf.gather_nd(coalesced_indices, [k,0])])
+                r_data = tf.gather_nd(self.core, [k,tf.gather_nd(coalesced_indices, [k,1])])
+                l_branch = self.left_branches[k][i]
+                r_branch = self.right_branches[k][i]
+                mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
+                new_data[k] = tf.expand_dims(mtx, axis=0)
+            new_data = tf.concat([new_data], axis=0)
+            shape1 = self.core.shape[0].value * self.core.shape[1].value
+            self.core = tf.gather(tf.reshape(self.core, [shape1, self.core.shape[2].value, self.core.shape[3].value]), remaining_indices)
+            self.core = tf.concat([self.core, new_data], axis=1)
+            # (after these, every matrix in self.core[k] (self.core[k] is a 'list' of matrices) will be a subroot's data)
+            # (which means that compute_tree_likelihood only needs to sum over these matrices)
 
             # Iterate over partial states
             for k in range(K):
-
-                # Extend partial states
-                particle1, particle2, particle_coalesced, bl1, bl2, q, jump_chain_KxN \
-                    = self.extend_partial_state(jump_chain_KxN, k, i)
-
-                # Save partial set and branch length data
-                vertex_dicts[k][particle_coalesced] = Vertex(id=particle_coalesced, data=None)
-                vertex_dicts[k][particle_coalesced].left = vertex_dicts[k][particle1]
-                vertex_dicts[k][particle_coalesced].right = vertex_dicts[k][particle2]
-                vertex_dicts[k][particle_coalesced].left_branch = bl1
-                vertex_dicts[k][particle_coalesced].right_branch = bl2
-                vertex_dicts[k][particle1].is_root = False
-                vertex_dicts[k][particle2].is_root = False
-
-                # Build tree
-                # self.build_tree(particle1, particle2, particle_coalesced, k)
-
-            for k in range(K):
                 # Compute log conditional likelihood across genome for a partial state
-                print('Computation of norm in progress: step ', i+1, k)
                 log_likelihood[k][i] = 0
-                for key in vertex_dicts[k]:
-                    if vertex_dicts[k][key].is_root:
-                        log_likelihood[k][i] \
-                        += self.compute_log_conditional_likelihood(vertex_dicts[k][key])
+                for j in range(n-1-i):
+                    log_likelihood[k][i] += self.compute_tree_likelihood(tf.gather_nd(self.core, [k,j]))
 
-                # Sample from last step
-                log_likelihood_tilda = 1
+                # Overcounting correction and ompute the importance weights
                 if i > 0:
-                    log_likelihood_tilda = 0
-                    idx = random.randint(0,K-1)
-                    for key in vertex_dicts_laststep[idx]:
-                        if vertex_dicts_laststep[idx][key].is_root:
-                            log_likelihood_tilda \
-                            += self.compute_log_conditional_likelihood(vertex_dicts_laststep[idx][key])
+                    v[k] = self.overcounting_correct(v[k], tf.gather(coalesced_indices, k), i)
 
-                # Overcounting correction
-                v = self.overcounting_correct(vertex_dicts[k])
-
-                # Compute the importance weights
-                if i > 0:
-                    log_weights_KxNm1[k][i] = log_likelihood[k][i] - log_likelihood_tilda + tf.log(v) - tf.log(q)
+                    log_weights_KxNm1[k][i] = log_likelihood[k][i] - log_likelihood_tilda[k] + \
+                     tf.math.log(tf.cast(v[k],tf.float64)) - tf.math.log(tf.cast(q,tf.float64))
                     weights_KxNm1[k][i] = tf.exp(log_weights_KxNm1[k][i])
 
-            vertex_dicts_laststep = deepcopy(vertex_dicts)
-            # print('Computation of norm in progress: step ' + str(i+1))
+                print('Construction of computational graph in progress: step ', i+1, k+1)
         # End of iteration
 
         norm = self.compute_norm(weights_KxNm1)
         self.cost = -norm
         self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.01).minimize(self.cost)
 
-        # print(weights_KxNm1)
-
-        # tree_probabilities, trees = self.get_tree_prob(vertex_dicts, weights_KxNm1, K)
-        # print(tree_probabilities)
-
-        # plt.hist(tree_probabilities)
-        # plt.xlabel('Posterior probability')
-        # plt.ylabel('Number of generated trees')
-        # plt.show()
-        # np.savetxt('tree_prob.csv', tree_probabilities, delimiter=',')
-
-        # selected_idx = tree_probabilities.index(max(tree_probabilities))
-        # print(trees[selected_idx])
-        
-        # pdb.set_trace()
-        # G = self.build_graph(Graph(), self.graph_repn_nodes_K[selected_idx][-1])
-        # if showing:
-            # G.draw(tree_probabilities[selected_idx])
-
         return norm
 
-    def get_feed_dict(self):
-        self.feed_dict = {}
-        for i in range(len(self.leaf_nodes)):
-            idx = self.taxa.index(self.leaf_nodes[i].id)
-            self.feed_dict[self.leaf_nodes[i].data] = self.genome_NxSxA[idx]
+    # def get_feed_dict(self):
+    #     self.feed_dict = {}
+    #     for k in range(len(self.lst_placeholders)):
+    #         for i in range(len(self.lst_placeholders[0])):
+    #             self.feed_dict[self.lst_placeholders[k][i]] = self.genome_NxSxA[i]
 
     def train(self, K):
         """
         Run the train op in a TensorFlow session and evaluate variables
         """
         self.sample_phylogenies(K)
-        self.get_feed_dict()
+        #self.get_feed_dict()
         init = tf.global_variables_initializer()
         sess = tf.Session()
         sess.run(init)
-
+        print(sess.run(self.cost))
+        #print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
         costs = []
-        for i in range(1000):
-            _, cost = sess.run([self.optimizer, self.cost], feed_dict=self.feed_dict)
+        for i in range(100):
+            _, cost = sess.run([self.optimizer, self.cost])
             costs.append(cost)
+            print(cost)
             print('Training in progress: step', i)
         
-        print(costs)
-        for node in self.internal_nodes:
-            print('-----------------')
-            print(node.id)
-            print(sess.run(node.left_branch))
-            print(sess.run(node.right_branch))
-        #plt.plot(costs)
-        #plt.show()
+        print(sess.run(self.Qmatrix))
+        plt.plot(costs)
+        plt.show()
 
         return
 
@@ -489,21 +255,20 @@ if __name__ == "__main__":
     real_data_corona = False
     real_data_1 = False
     real_data_2 = False
-    simulate_data = True
-    load_strings = False
+    simulate_data = False
+    load_strings = True
 
-    alphabet = 'ACTG'
     Alphabet_dir = {'A': [1, 0, 0, 0],
                     'C': [0, 1, 0, 0],
-                    'T': [0, 0, 1, 0],
-                    'G': [0, 0, 0, 1]}
+                    'G': [0, 0, 1, 0],
+                    'T': [0, 0, 0, 1]}
     alphabet_dir = {'a': [1, 0, 0, 0],
                     'c': [0, 1, 0, 0],
-                    't': [0, 0, 1, 0],
-                    'g': [0, 0, 0, 1]}
+                    'g': [0, 0, 1, 0],
+                    't': [0, 0, 0, 1]}
                     
 
-    alphabet = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+    alphabet = np.array([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]])
 
     genome_strings = ['ACTTTGAGAG','ACTTTGACAG','ACTTTGACTG','ACTTTGACTC']
     #genome_strings = ['AAAAAA','CCCCCC','TTTTTT','GGGGGG']
@@ -603,3 +368,12 @@ if __name__ == "__main__":
 
 
 
+
+
+
+
+
+
+
+
+    
