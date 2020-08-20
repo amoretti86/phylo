@@ -3,7 +3,7 @@ An implementation of the Combinatorial Sequential Monte Carlo algorithm
 for Phylogenetic Inference
 """
 
-# Version 5; removes Vertex class, changes much of the architecture
+# Version 6; based on 5, and corrects gather_nd issue during gradient eval
 
 import numpy as np
 import random
@@ -22,6 +22,20 @@ from networkx.drawing.nx_agraph import graphviz_layout
 from functools import reduce
 
 
+class Vertex:
+
+    def __init__(self, id=None, data=None):
+        self.id = id
+        self.data = data
+        self.left = None
+        self.right = None
+        self.left_branch = None
+        self.right_branch = None
+        self.is_subroot = True
+        self.is_leaf = False
+        self.data_done = False
+
+
 #@staticmethod
 def ncr(n, r):
     # Compute combinatorial term n choose r
@@ -29,6 +43,13 @@ def ncr(n, r):
     numer = reduce(op.mul, range(n, n-r, -1), 1)
     denom = reduce(op.mul, range(1, r+1), 1)
     return numer/denom
+
+#@staticmethod
+def sort_string(s):
+    lst = s.split('+')
+    lst = sorted(lst)
+    result = '+'.join(lst)
+    return result
 
 
 class CSMC:
@@ -63,19 +84,14 @@ class CSMC:
         Q = tf.stack((A1,A2,A3,A4), axis=0)
         return Q
 
-    def resample(weights_KxNm1, JC_K, i, K, debug=False):
+    def resample(JC_K, weights_KxNm1, i, debug=False):
         """
         Resample partial states by drawing from a categorical distribution whose parameters are normalized importance weights
         JumpChain (JC_K) is a tensor formed from a numpy array of lists of strings, returns a resampled JumpChain tensor
         """
-        indices = tf.random.categorical(tf.math.log(tf.expand_dims(weights_KxNm1[:, i] / tf.reduce_sum(weights_KxNm1[:, i], axis=0), axis=0)), K)
-        resampled_tensor = tf.gather(JC_K, tf.squeeze(indices))
-        if debug:
-            with tf.Session() as sess:
-                sess.run(tf.global_variables_initializer())
-                print("Jump Chain Tensor:\n", sess.run(resampled_tensor))
-                print("OH YEAH!")
-        return resampled_tensor
+        indices = tf.random.categorical(tf.math.log(tf.expand_dims(weights_KxNm1[:, i] / tf.reduce_sum(weights_KxNm1[:, i], axis=0), axis=0)), self.K)
+        resampled_JC_K = tf.gather(JC_K, tf.squeeze(indices))
+        return resampled_JC_K
 
     def extend_partial_state(self, JCK, debug=False):
         """
@@ -137,16 +153,10 @@ class CSMC:
         norm = tf.reduce_prod(1/K*tf.reduce_sum(weights_KxNm1, axis=0))
         return norm
 
-    def sample_phylogenies(self, K, resampling=False, showing=False):
-
-        self.K = K
+    def sample_phylogenies(self, K, resampling=True):
         n = self.n
         s = self.s
 
-        # log_weights_KxNm1 = [[0. for i in range(n-1)] for j in range(K)]
-        # weights_KxNm1 = [[1. for i in range(n-1)] for j in range(K)]
-        # log_likelihood = [[0. for i in range(n-1)] for j in range(K)]
-        # log_likelihood_tilda = [1. for j in range(K)]
         log_weights_KxNm1 = [[0. for i in range(n-1)] for j in range(K)]
         weights_KxNm1 = [[1. for i in range(n-1)] for j in range(K)]
         log_likelihood = [[0. for i in range(n-1)] for j in range(K)]
@@ -158,21 +168,23 @@ class CSMC:
         self.core = tf.constant(np.array([self.genome_NxSxA]*K))
         self.left_branches = [[tf.Variable(2, dtype=tf.float64) for i in range(n-1)] for k in range(K)]
         self.right_branches = [[tf.Variable(2, dtype=tf.float64) for i in range(n-1)] for k in range(K)]
-        v = [1 for k in range(K)] # Used for overcounting correction
+        v = [1 for k in range(K)]
+        p_for_last_step = [1/K for i in range(K)]
 
         # Iterate over coalescent events
         for i in range(n-1):
             # Resampling step
             if resampling and i > 0:
-                jump_chain_KxN[:,i-1] = self.resample(log_weights_KxNm1, jump_chain_KxN[:,i-1], i-1, K)
+                jump_chain_tensor = self.resample(jump_chain_tensor, weights_KxNm1, i-1)
 
             # Sample from last step
+            '''This needs to be changed. Needs a tensorflow way to do random.randint()'''
             if i > 0:
                 for k in range(K):
                     loglik = 0
-                    idx = random.randint(0,K-1)
+                    idx = tf.squeeze(tf.random.categorical(tf.log([p_for_last_step]), 1))
                     for j in range(n-i):
-                        loglik += self.compute_tree_likelihood(tf.gather_nd(self.core, [k,j]))
+                        loglik += self.compute_tree_likelihood(tf.gather_nd(self.core, [[idx,j,s_i] for s_i in range(s)]))
                     log_likelihood_tilda[k] = loglik
 
             # Extend partial states
@@ -182,8 +194,10 @@ class CSMC:
             # Save partial set and branch length data
             new_data = [0 for i in range(K)]
             for k in range(K):
-                l_data = tf.gather_nd(self.core, [k,tf.gather_nd(coalesced_indices, [k,0])])
-                r_data = tf.gather_nd(self.core, [k,tf.gather_nd(coalesced_indices, [k,1])])
+                n1 = tf.gather_nd(coalesced_indices, [k,0])
+                n2 = tf.gather_nd(coalesced_indices, [k,1])
+                l_data = tf.gather_nd(self.core, [[k,n1,s_i] for s_i in range(s)])
+                r_data = tf.gather_nd(self.core, [[k,n2,s_i] for s_i in range(s)])
                 l_branch = self.left_branches[k][i]
                 r_branch = self.right_branches[k][i]
                 mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
@@ -200,7 +214,7 @@ class CSMC:
                 # Compute log conditional likelihood across genome for a partial state
                 log_likelihood[k][i] = 0
                 for j in range(n-1-i):
-                    log_likelihood[k][i] += self.compute_tree_likelihood(tf.gather_nd(self.core, [k,j]))
+                    log_likelihood[k][i] += self.compute_tree_likelihood(tf.gather_nd(self.core, [[k,j,s_i] for s_i in range(s)]))
 
                 # Overcounting correction and ompute the importance weights
                 if i > 0:
@@ -212,10 +226,9 @@ class CSMC:
 
                 print('Construction of computational graph in progress: step ', i+1, k+1)
         # End of iteration
-
         norm = self.compute_norm(weights_KxNm1)
         self.cost = -norm
-        self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.01).minimize(self.cost)
+        self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.001).minimize(self.cost)
 
         return norm
 
@@ -229,6 +242,7 @@ class CSMC:
         """
         Run the train op in a TensorFlow session and evaluate variables
         """
+        self.K = K
         self.sample_phylogenies(K)
         #self.get_feed_dict()
         init = tf.global_variables_initializer()
@@ -237,7 +251,7 @@ class CSMC:
         print(sess.run(self.cost))
         #print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
         costs = []
-        for i in range(100):
+        for i in range(1000):
             _, cost = sess.run([self.optimizer, self.cost])
             costs.append(cost)
             print(cost)
@@ -355,7 +369,7 @@ if __name__ == "__main__":
         csmc.Pmatrix = spl.expm(csmc.Qmatrix)
         csmc.prior = np.ones(csmc.Qmatrix.shape[0])/csmc.Qmatrix.shape[0]
 
-    csmc.train(10)
+    csmc.train(20)
 
     # log_weights, tree_probs, norm, G = csmc.sample_phylogenies(200, resampling=False, showing=True)
 
