@@ -49,7 +49,7 @@ class CSMC:
         self.pi_c = tf.constant(0.25, dtype=tf.float64)
         self.pi_g = tf.constant(0.25, dtype=tf.float64)
         self.pi_t = tf.constant(0.25, dtype=tf.float64)
-        self.kappa = tf.Variable(2., dtype=tf.float64, name="kappa", constraint=lambda x: tf.clip_by_value(x, 0, 1000000))
+        self.kappa = tf.Variable(2., dtype=tf.float64, name="kappa", constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6))
         self.Qmatrix = self.get_Q(self.pi_c,self.pi_g,self.pi_t,self.kappa)
         self.Pmatrix = tf.linalg.expm(self.Qmatrix)
         self.state_probs = tf.stack([[1-self.pi_c-self.pi_g-self.pi_t, self.pi_c, self.pi_g, self.pi_t]], axis=0)
