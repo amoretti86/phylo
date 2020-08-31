@@ -49,7 +49,7 @@ class CSMC:
         self.pi_c = tf.constant(0.25, dtype=tf.float64)
         self.pi_g = tf.constant(0.25, dtype=tf.float64)
         self.pi_t = tf.constant(0.25, dtype=tf.float64)
-        self.kappa = tf.Variable(2., dtype=tf.float64, name="kappa")
+        self.kappa = tf.Variable(2., dtype=tf.float64, name="kappa", constraint=lambda x: tf.clip_by_value(x, 0, 1000000))
         self.Qmatrix = self.get_Q(self.pi_c,self.pi_g,self.pi_t,self.kappa)
         self.Pmatrix = tf.linalg.expm(self.Qmatrix)
         self.state_probs = tf.stack([[1-self.pi_c-self.pi_g-self.pi_t, self.pi_c, self.pi_g, self.pi_t]], axis=0)
@@ -236,20 +236,22 @@ class CSMC:
         Run the train op in a TensorFlow session and evaluate variables
         """
         self.sample_phylogenies(K)
-        print('Finished constructing computational graph!')
+        print('===================\nFinished constructing computational graph!\n===================')
         #self.get_feed_dict()
         init = tf.global_variables_initializer()
         sess = tf.Session()
         sess.run(init)
-        print('Initial evaluation of cost:', round(sess.run(self.cost), 3))
+        print('===================\nInitial evaluation of cost:', round(sess.run(self.cost), 3), '\n===================')
         print('Training begins --')
         #print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
         costs = []
         for i in range(1000):
             _, cost = sess.run([self.optimizer, self.cost])
             costs.append(cost)
-            print('Epoch', i, '; Cost', round(cost, 3))
-        
+            print('--------------------\nEpoch', i+1)
+            print('Cost\n', round(cost, 3))
+            print('Q-matrix\n', sess.run(self.Qmatrix))
+        print("Done training.")
         plt.plot(costs)
         plt.show()
 
