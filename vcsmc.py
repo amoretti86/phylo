@@ -198,6 +198,8 @@ class VCSMC:
         n = self.n;
         s = self.s;
         self.K = K
+        # Save jump chain
+        self.jump_chains = []
 
         log_weights = [tf.constant(0, shape=(K,), dtype=tf.float64) for i in range(n - 1)]
         log_likelihood = [tf.constant(0, shape=(K,), dtype=tf.float64) for i in range(n - 1)]
@@ -207,9 +209,9 @@ class VCSMC:
         jump_chain_tensor = tf.constant([self.taxa] * K, name='JumpChainK')
         # Keep matrices of all vertices, KxNxSxA (the coalesced children nodes will be removed as we go)
         self.core = tf.constant(np.array([self.genome_NxSxA] * K))
-        self.left_branches = tf.Variable(np.zeros((K, n - 1)) + 2, dtype=tf.float64,
+        self.left_branches = tf.Variable(np.zeros((K, n - 1)) + 1, dtype=tf.float64,
                                          constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6))
-        self.right_branches = tf.Variable(np.zeros((K, n - 1)) + 2, dtype=tf.float64,
+        self.right_branches = tf.Variable(np.zeros((K, n - 1)) + 1, dtype=tf.float64,
                                           constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6))
         v = tf.constant(1, shape=(K,), dtype=tf.float64)  # to be used in overcounting_correct
 
@@ -221,10 +223,13 @@ class VCSMC:
                 jump_chain_tensor, indices = self.resample(jump_chain_tensor, log_weights[i - 1])
                 log_likelihood_tilda = tf.gather_nd(tf.gather(tf.transpose(log_likelihood_tf), indices),
                                                     [[k, i - 1] for k in range(K)])
+                # Save the jump chain tensor
+                self.jump_chains.append(jump_chain_tensor)
 
             # Extend partial states
             particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, \
             q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor)
+
 
             # Save partial set data
             new_data = tf.constant(np.zeros((1, 1, self.s, self.a)))  # to be used in tf.while_loop
@@ -279,6 +284,7 @@ class VCSMC:
         Qmatrices = []
         left_branches = []
         right_branches = []
+        jump_chain_evolution = []
         for i in range(numIters):
             _, cost = sess.run([self.optimizer, self.cost])
             # Plot the ELBO, log_ZSMC which is -cost
@@ -290,6 +296,8 @@ class VCSMC:
             Qmatrices.append(Qmat)
             left_branches.append(sess.run(self.left_branches))
             right_branches.append(sess.run(self.left_branches))
+            #print('Jump Chains:\n')
+            jump_chain_evolution.append(sess.run(self.jump_chains))
         print("Done training.")
         #plt.plot(costs)
         #plt.show()
@@ -318,8 +326,10 @@ class VCSMC:
                       'lr': self.learning_rate,
                       'nTaxa': self.n,
                       'left_branches': np.asarray(left_branches),
-                      'right_branches': np.asarray(right_branches)}
+                      'right_branches': np.asarray(right_branches),
+                      'jump_chain_evolution': jump_chain_evolution}
 
+        #pdb.set_trace()
         with open(save_dir + 'results.p', 'wb') as f:
             pickle.dump(resultDict, f)
 
