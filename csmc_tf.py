@@ -180,8 +180,8 @@ class CSMC:
         jump_chain_tensor = tf.constant([self.taxa] * K, name='JumpChainK')
         # Keep matrices of all vertices, KxNxSxA (the coalesced children nodes will be removed as we go)
         self.core = tf.constant(np.array([self.genome_NxSxA]*K))
-        self.left_branches = tf.Variable(np.zeros((K,n-1))+2, dtype=tf.float64)
-        self.right_branches = tf.Variable(np.zeros((K,n-1))+2, dtype=tf.float64)
+        self.left_branches = tf.Variable(np.zeros((K,n-1))+2, dtype=tf.float64, constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6))
+        self.right_branches = tf.Variable(np.zeros((K,n-1))+2, dtype=tf.float64, constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6))
         v = tf.constant(1, shape=(K,), dtype=tf.float64) # to be used in overcounting_correct
 
         # Iterate over coalescent events
