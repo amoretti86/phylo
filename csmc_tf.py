@@ -3,38 +3,15 @@ An implementation of the Combinatorial Sequential Monte Carlo algorithm
 for Phylogenetic Inference
 """
 
-# Version 6; based on 5, and corrects gather_nd issue during gradient eval
-# Fixes several other things such as incorporating resampling
+# Version 7; based on v6, it changes most for loops to tf.while_loop()
 
 import numpy as np
-import random
 import tensorflow.compat.v1 as tf
 import tensorflow_probability as tfp
-from scipy.stats import lognorm
-import scipy.linalg as spl
-from scipy.linalg import expm
 import matplotlib.pyplot as plt
-import pandas as pd
 import pdb
-from copy import deepcopy
 import operator as op
-import networkx as nx
-from networkx.drawing.nx_agraph import graphviz_layout
 from functools import reduce
-
-
-class Vertex:
-
-    def __init__(self, id=None, data=None):
-        self.id = id
-        self.data = data
-        self.left = None
-        self.right = None
-        self.left_branch = None
-        self.right_branch = None
-        self.is_subroot = True
-        self.is_leaf = False
-        self.data_done = False
 
 
 #@staticmethod
@@ -65,6 +42,7 @@ class CSMC:
         self.genome_NxSxA = datadict['genome']
         self.n = len(datadict['taxa'])
         self.s = len(self.genome_NxSxA[0])
+        self.a = len(self.genome_NxSxA[0,0])
         # self.pi_c = tf.Variable(0.25, dtype=tf.float64, name="pi_c", constraint=lambda x: tf.clip_by_value(x, 0, 1))
         # self.pi_g = tf.Variable(0.25, dtype=tf.float64, name="pi_g", constraint=lambda x: tf.clip_by_value(x, 0, 1))
         # self.pi_t = tf.Variable(0.25, dtype=tf.float64, name="pi_t", constraint=lambda x: tf.clip_by_value(x, 0, 1-self.pi_c-self.pi_g))
@@ -85,15 +63,14 @@ class CSMC:
         Q = tf.stack((A1,A2,A3,A4), axis=0)
         return Q
 
-    def resample(self, JC_K, weights_KxNm1, i, debug=False):
+    def resample(self, JC_K, log_weights, debug=False):
         """
         Resample partial states by drawing from a categorical distribution whose parameters are normalized importance weights
         JumpChain (JC_K) is a tensor formed from a numpy array of lists of strings, returns a resampled JumpChain tensor
         """
-        weights = [[row[j] for row in weights_KxNm1] for j in range(self.n-1)] 
-        indices = tf.random.categorical(tf.math.log(tf.expand_dims(weights[i]/tf.reduce_sum(weights[i], axis=0), axis=0)), self.K)
-        resampled_JC_K = tf.gather(JC_K, tf.squeeze(indices))
-        return resampled_JC_K
+        indices = tf.squeeze(tf.random.categorical(tf.expand_dims(log_weights, axis=0), self.K))
+        resampled_JC_K = tf.gather(JC_K, indices)
+        return resampled_JC_K, indices
 
     def extend_partial_state(self, JCK, debug=False):
         """
@@ -136,98 +113,115 @@ class CSMC:
         loglik = tf.reduce_sum(tf.log(tree_likelihood))
         return loglik
 
-    def overcounting_correct(self, v, indices, i):
+    def overcounting_correct(self, v, indices):
         idx1 = tf.gather(indices, 0)
         idx2 = tf.gather(indices, 1)
-        threshold = self.n-i-1
-        cond_greater = tf.cond(tf.logical_and(idx1 > threshold, idx2 > threshold), lambda:-1., lambda:0.)
-        result = tf.cond(tf.logical_and(idx1 < threshold, idx2 < threshold), lambda:1., lambda:cond_greater)
+        threshold = self.n-self.i-1
+        cond_greater = tf.where(tf.logical_and(idx1 > threshold, idx2 > threshold), -1., 0.)
+        result = tf.where(tf.logical_and(idx1 < threshold, idx2 < threshold), 1., cond_greater)
 
-        v = tf.add(v,result)
+        v = tf.add(v, tf.cast(result, tf.float64))
         return 1/v
 
-    def compute_norm(self, weights_KxNm1):
+    def compute_norm(self, log_weights):
         # Computes norm, which is negative of our final cost
-        K = len(weights_KxNm1)
-        norm = tf.reduce_prod(1/K*tf.reduce_sum(weights_KxNm1, axis=0))
+        norm = tf.reduce_sum(tf.reduce_logsumexp(log_weights - tf.log(tf.cast(self.K, tf.float64)), axis=1))
         return norm
 
-    def sample_phylogenies(self, K, resampling=True):
-        n = self.n
-        s = self.s
+    def body_update_data(self, new_data, coalesced_indices, k):
+        n1 = tf.gather_nd(coalesced_indices, [k,0])
+        n2 = tf.gather_nd(coalesced_indices, [k,1])
+        l_data = tf.squeeze(tf.gather_nd(self.core, [[k,n1]]))
+        r_data = tf.squeeze(tf.gather_nd(self.core, [[k,n2]]))
+        l_branch = tf.squeeze(tf.gather_nd(self.left_branches, [[k,self.i]]))
+        r_branch = tf.squeeze(tf.gather_nd(self.right_branches, [[k,self.i]]))
+        mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
+        mtx_ext = tf.expand_dims(tf.expand_dims(mtx, axis=0), axis=0) # 1x1xSxA
+        new_data = tf.concat([new_data, mtx_ext], axis=0) # kx1xSxA
+        k = k + 1
+        return new_data, coalesced_indices, k
 
-        log_weights_KxNm1 = [[0. for i in range(n-1)] for j in range(K)]
-        weights_KxNm1 = [[1. for i in range(n-1)] for j in range(K)]
-        log_likelihood = [[0. for i in range(n-1)] for j in range(K)]
-        log_likelihood_tilda = [1. for j in range(K)]
+    def cond_update_data(self, new_data, coalesced_indices, k):
+        return k < self.K
+
+    def body_update_weights(self, log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, k):
+        log_likelihood_i_k, k, j = tf.while_loop(self.cond_compute_forest, self.body_compute_forest, [tf.constant(0, dtype=tf.float64), k, 0])
+        log_likelihood_i = tf.concat([log_likelihood_i, [log_likelihood_i_k]], axis=0)
+        if self.i > 0:
+            v = tf.concat([v, [self.overcounting_correct(tf.gather(v, k), tf.gather(coalesced_indices, k))]], axis=0)
+            new_log_weight = tf.gather(log_likelihood_i, k+1) - tf.gather(log_likelihood_tilda, k) + \
+              tf.math.log(tf.cast(tf.gather(v, k+self.K), tf.float64)) - tf.math.log(tf.cast(q, tf.float64))
+            log_weights_i = tf.concat([log_weights_i, [new_log_weight]], axis=0)
+        else:
+            v = tf.concat([v, [tf.constant(1, dtype=tf.float64)]], axis=0)
+            log_weights_i = tf.concat([log_weights_i, [tf.constant(0, dtype=tf.float64)]], axis=0)
+        k = k + 1
+        return log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, k
+
+    def cond_update_weights(self, log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, k):
+        return k < self.K
+
+    def body_compute_forest(self, log_likelihood_i_k, k, j):
+        log_likelihood_i_k = log_likelihood_i_k + self.compute_tree_likelihood(tf.squeeze(tf.gather_nd(self.core, [[k,j]])))
+        j = j + 1
+        return log_likelihood_i_k, k, j
+
+    def cond_compute_forest(self, log_likelihood_i_k, k, j):
+        return j < self.n-1-self.i
+
+    def sample_phylogenies(self, K, resampling=True):
+        n = self.n; s = self.s; self.K = K
+
+        log_weights = [tf.constant(0, shape=(K,), dtype=tf.float64) for i in range(n-1)]
+        log_likelihood = [tf.constant(0, shape=(K,), dtype=tf.float64) for i in range(n-1)]
+        log_likelihood_tilda = tf.constant(1, shape=(K,), dtype=tf.float64)
 
         # Represent a single jump_chain as a list of dictionaries
         jump_chain_tensor = tf.constant([self.taxa] * K, name='JumpChainK')
-        # Keep matrices of all vertices, KxNxSxA (the coalesced children vertices will be removed as we go)
+        # Keep matrices of all vertices, KxNxSxA (the coalesced children nodes will be removed as we go)
         self.core = tf.constant(np.array([self.genome_NxSxA]*K))
-        self.left_branches = [[tf.Variable(2, dtype=tf.float64) for i in range(n-1)] for k in range(K)]
-        self.right_branches = [[tf.Variable(2, dtype=tf.float64) for i in range(n-1)] for k in range(K)]
-        v = [1. for k in range(K)]
-        p_for_last_step = [1/K for i in range(K)]
+        self.left_branches = tf.Variable(np.zeros((K,n-1))+2, dtype=tf.float64)
+        self.right_branches = tf.Variable(np.zeros((K,n-1))+2, dtype=tf.float64)
+        v = tf.constant(1, shape=(K,), dtype=tf.float64) # to be used in overcounting_correct
 
         # Iterate over coalescent events
         for i in range(n-1):
+            self.i = i
             # Resampling step
             if resampling and i > 0:
-                jump_chain_tensor = self.resample(jump_chain_tensor, weights_KxNm1, i-1)
-
-            # Sample from last step
-            if i > 0:
-                for k in range(K):
-                    loglik = 0
-                    idx = tf.squeeze(tf.random.categorical(tf.log([p_for_last_step]), 1))
-                    for j in range(n-i):
-                        loglik += self.compute_tree_likelihood(tf.squeeze(tf.gather_nd(self.core, [[idx,j]])))
-                    log_likelihood_tilda[k] = loglik
+                jump_chain_tensor, indices = self.resample(jump_chain_tensor, log_weights[i-1])
+                log_likelihood_tilda = tf.gather_nd(tf.gather(tf.transpose(log_likelihood_tf), indices), [[k, i-1] for k in range(K)])
 
             # Extend partial states
             particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, \
               q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor)
 
-            # Save partial set and branch length data
-            new_data = [0 for i in range(K)]
-            for k in range(K):
-                n1 = tf.gather_nd(coalesced_indices, [k,0])
-                n2 = tf.gather_nd(coalesced_indices, [k,1])
-                l_data = tf.squeeze(tf.gather_nd(self.core, [[k,n1]]))
-                r_data = tf.squeeze(tf.gather_nd(self.core, [[k,n2]]))
-                l_branch = self.left_branches[k][i]
-                r_branch = self.right_branches[k][i]
-                mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
-                new_data[k] = tf.expand_dims(mtx, axis=0)
-            new_data = tf.concat([new_data], axis=0)
+            # Save partial set data
+            new_data = tf.constant(np.zeros((1,1,self.s,self.a))) # to be used in tf.while_loop
+            new_data, coalesced_indices, k = tf.while_loop(self.cond_update_data, self.body_update_data, 
+                loop_vars=[new_data, coalesced_indices, 0],
+                shape_invariants=[tf.TensorShape([None,1,self.s,self.a]), coalesced_indices.get_shape(), tf.TensorShape([])])
+            new_data = tf.gather(new_data, list(range(1,K+1))) # remove the trivial index 0
             shape1 = self.core.shape[0].value * self.core.shape[1].value
             self.core = tf.gather(tf.reshape(self.core, [shape1, self.core.shape[2].value, self.core.shape[3].value]), remaining_indices)
             self.core = tf.concat([self.core, new_data], axis=1)
-            # (after these, every matrix in self.core[k] (self.core[k] is a 'list' of matrices) will be a subroot's data)
-            # (which means that compute_tree_likelihood only needs to sum over these matrices)
 
-            # Iterate over partial states
-            for k in range(K):
-                # Compute log conditional likelihood across genome for a partial state
-                log_likelihood[k][i] = 0
-                for j in range(n-1-i):
-                    log_likelihood[k][i] += self.compute_tree_likelihood(tf.squeeze(tf.gather_nd(self.core, [[k,j]])))
-
-                # Overcounting correction and ompute the importance weights
-                if i > 0:
-                    v[k] = self.overcounting_correct(v[k], tf.gather(coalesced_indices, k), i)
-
-                    log_weights_KxNm1[k][i] = log_likelihood[k][i] - log_likelihood_tilda[k] + \
-                     tf.math.log(tf.cast(v[k],tf.float64)) - tf.math.log(tf.cast(q,tf.float64))
-                    weights_KxNm1[k][i] = tf.exp(log_weights_KxNm1[k][i])
-
-                print('Construction of computational graph in progress: step ', i+1, k+1)
+            # Comptue weights
+            log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, k = \
+              tf.while_loop(self.cond_update_weights, self.body_update_weights,
+                loop_vars=[tf.constant(np.zeros(1)), tf.constant(np.zeros(1)), log_likelihood_tilda, coalesced_indices, v, q, 0],
+                shape_invariants=[tf.TensorShape([None]), tf.TensorShape([None]), log_likelihood_tilda.get_shape(), \
+                  coalesced_indices.get_shape(), tf.TensorShape([None]), tf.TensorShape([]), tf.TensorShape([])])
+            log_likelihood[i] = tf.gather(log_likelihood_i, list(range(1,K+1)))
+            log_weights[i] = tf.gather(log_weights_i, list(range(1,K+1)))
+            v = tf.gather(v, list(range(K,2*K)))
+            log_likelihood_tf = tf.stack([log_likelihood[i] for i in range(n-1)], axis=0)
         # End of iteration
-        
-        norm = self.compute_norm(weights_KxNm1)
+
+        log_weights = tf.stack([log_weights[i] for i in range(n-1)], axis=0)
+        norm = self.compute_norm(log_weights)
         self.cost = -norm
-        self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.001).minimize(self.cost)
+        self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.01).minimize(self.cost)
 
         return norm
 
@@ -241,22 +235,21 @@ class CSMC:
         """
         Run the train op in a TensorFlow session and evaluate variables
         """
-        self.K = K
         self.sample_phylogenies(K)
+        print('Finished constructing computational graph!')
         #self.get_feed_dict()
         init = tf.global_variables_initializer()
         sess = tf.Session()
         sess.run(init)
-        print(sess.run(self.cost))
+        print('Initial evaluation of cost:', round(sess.run(self.cost), 3))
+        print('Training begins --')
         #print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
         costs = []
         for i in range(1000):
             _, cost = sess.run([self.optimizer, self.cost])
             costs.append(cost)
-            print(cost)
-            print('Training in progress: step', i)
+            print('Epoch', i, '; Cost', round(cost, 3))
         
-        print(sess.run(self.Qmatrix))
         plt.plot(costs)
         plt.show()
 
@@ -284,11 +277,6 @@ if __name__ == "__main__":
     alphabet = np.array([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]])
 
     genome_strings = ['ACTTTGAGAG','ACTTTGACAG','ACTTTGACTG','ACTTTGACTC']
-    #genome_strings = ['AAAAAA','CCCCCC','TTTTTT','GGGGGG']
-    # a = ''
-    # for i in range(150):
-    #     a += 'A'
-    # genome_strings = [a,a,a,a]
 
     def simulateDNA(nsamples, seqlength, alphabet):
         genomes_NxSxA = np.zeros([nsamples, seqlength, alphabet.shape[0]])
@@ -368,7 +356,7 @@ if __name__ == "__main__":
         csmc.Pmatrix = spl.expm(csmc.Qmatrix)
         csmc.prior = np.ones(csmc.Qmatrix.shape[0])/csmc.Qmatrix.shape[0]
 
-    csmc.train(8)
+    csmc.train(100)
 
     # log_weights, tree_probs, norm, G = csmc.sample_phylogenies(200, resampling=False, showing=True)
 
@@ -389,4 +377,3 @@ if __name__ == "__main__":
 
 
 
-    
