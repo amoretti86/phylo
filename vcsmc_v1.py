@@ -24,13 +24,6 @@ def ncr(n, r):
     denom = reduce(op.mul, range(1, r + 1), 1)
     return numer / denom
 
-# @staticmethod
-def sort_string(s):
-    lst = s.split('+')
-    lst = sorted(lst)
-    result = '+'.join(lst)
-    return result
-
 
 class VCSMC:
     """
@@ -81,9 +74,8 @@ class VCSMC:
         # Compute combinatorial term
         # pdb.set_trace()
         q = 1 / ncr(JCK.shape[1], 2)
-        data = np.arange(0, (JCK.shape[1].value) * JCK.shape[0].value, 1).reshape(JCK.shape[0].value,
-                                                                                  JCK.shape[1].value) % (
-                   JCK.shape[1].value)
+        data = np.arange(0, (JCK.shape[1].value) * JCK.shape[0].value, 1).reshape(
+            JCK.shape[0].value, JCK.shape[1].value) % (JCK.shape[1].value)
         data = tf.constant(data, dtype=tf.int32)
         data = tf.cast(data, dtype=tf.float32)
         # Gumbel-max trick to sample without replacement
@@ -120,13 +112,13 @@ class VCSMC:
         loglik = tf.reduce_sum(tf.log(tree_likelihood))
         return loglik
 
-    def overcounting_correct(self, v, indices):
+    def overcounting_correct(self, v, indices, i):
         """
         Computes overcounting correction term to the proposal distribution
         """
         idx1 = tf.gather(indices, 0)
         idx2 = tf.gather(indices, 1)
-        threshold = self.n - self.i - 1
+        threshold = self.n - i - 1
         cond_greater = tf.where(tf.logical_and(idx1 > threshold, idx2 > threshold), -1., 0.)
         result = tf.where(tf.logical_and(idx1 < threshold, idx2 < threshold), 1., cond_greater)
         v = tf.add(v, tf.cast(result, tf.float64))
@@ -140,51 +132,64 @@ class VCSMC:
         log_Z_SMC = tf.reduce_sum(tf.reduce_logsumexp(log_weights - tf.log(tf.cast(self.K, tf.float64)), axis=1))
         return log_Z_SMC
 
-    def body_update_data(self, new_data, coalesced_indices, k):
+    def body_update_data(self, new_data, coalesced_indices, i, k):
         n1 = tf.gather_nd(coalesced_indices, [k, 0])
         n2 = tf.gather_nd(coalesced_indices, [k, 1])
         l_data = tf.squeeze(tf.gather_nd(self.core, [[k, n1]]))
         r_data = tf.squeeze(tf.gather_nd(self.core, [[k, n2]]))
-        l_branch = tf.squeeze(tf.gather_nd(self.left_branches, [[k, self.i]]))
-        r_branch = tf.squeeze(tf.gather_nd(self.right_branches, [[k, self.i]]))
+        l_branch = tf.squeeze(tf.gather_nd(self.left_branches, [[k, i]]))
+        r_branch = tf.squeeze(tf.gather_nd(self.right_branches, [[k, i]]))
         mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
         mtx_ext = tf.expand_dims(tf.expand_dims(mtx, axis=0), axis=0)  # 1x1xSxA
         new_data = tf.concat([new_data, mtx_ext], axis=0)  # kx1xSxA
         k = k + 1
-        return new_data, coalesced_indices, k
+        return new_data, coalesced_indices, i, k
 
-    def cond_update_data(self, new_data, coalesced_indices, k):
+    def cond_update_data(self, new_data, coalesced_indices, i, k):
         return k < self.K
 
-    def body_update_weights(self, log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, k):
-        log_likelihood_i_k, k, j = tf.while_loop(self.cond_compute_forest, self.body_compute_forest,
-                                                 [tf.constant(0, dtype=tf.float64), k, tf.constant(0)])
-        log_likelihood_i = tf.concat([log_likelihood_i, [log_likelihood_i_k]], axis=0)
-        if self.i > 0:
-            v = tf.concat([v, [self.overcounting_correct(tf.gather(v, k), tf.gather(coalesced_indices, k))]], axis=0)
-            new_log_weight = tf.gather(log_likelihood_i, k + 1) - tf.gather(log_likelihood_tilda, k) + \
-                             tf.math.log(tf.cast(tf.gather(v, k + self.K), tf.float64)) - \
-                             tf.math.log(tf.cast(q, tf.float64))
-            log_weights_i = tf.concat([log_weights_i, [new_log_weight]], axis=0)
-        else:
-            v = tf.concat([v, [tf.constant(1, dtype=tf.float64)]], axis=0)
-            log_weights_i = tf.concat([log_weights_i, [tf.constant(0, dtype=tf.float64)]], axis=0)
-        k = k + 1
-        return log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, k
-
-    def cond_update_weights(self, log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, k):
-        return k < self.K
-
-    def body_compute_forest(self, log_likelihood_i_k, k, j):
+    def body_compute_forest(self, log_likelihood_i_k, i, k, j):
         log_likelihood_i_k = log_likelihood_i_k + \
           self.compute_tree_likelihood(tf.squeeze(tf.gather_nd(self.core, [[k, j]])))
         j = j + 1
-        return log_likelihood_i_k, k, j
+        return log_likelihood_i_k, i, k, j
 
-    def cond_compute_forest(self, log_likelihood_i_k, k, j):
-        return j < self.n - 1 - self.i
+    def cond_compute_forest(self, log_likelihood_i_k, i, k, j):
+        return j < self.n - 1 - i
 
-    def sample_phylogenies(self, K, resampling=True):
+    def cond_true_update_weights(self, log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, i, k):
+        v = tf.concat([v, [self.overcounting_correct(tf.gather(v, k), tf.gather(coalesced_indices, k), i)]], axis=0)
+        new_log_weight = tf.gather(log_likelihood_i, k + 1) - tf.gather(log_likelihood_tilda, k) + \
+                         tf.math.log(tf.cast(tf.gather(v, k + self.K), tf.float64)) - \
+                         tf.math.log(tf.cast(q, tf.float64))
+        log_weights_i = tf.concat([log_weights_i, [new_log_weight]], axis=0)
+        return v, log_weights_i
+
+    def cond_false_update_weights(self, log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, i, k):
+        v = tf.concat([v, [tf.constant(1, dtype=tf.float64)]], axis=0)
+        log_weights_i = tf.concat([log_weights_i, [tf.constant(0, dtype=tf.float64)]], axis=0)
+        return v, log_weights_i
+
+    def body_update_weights(self, log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, i, k):
+        log_likelihood_i_k, i, k, j = tf.while_loop(self.cond_compute_forest, self.body_compute_forest,
+                                                 loop_vars=[tf.constant(0, dtype=tf.float64), i, k, tf.constant(0)])
+        log_likelihood_i = tf.concat([log_likelihood_i, [log_likelihood_i_k]], axis=0)
+        v, log_weights_i = tf.cond(i > 0, 
+            lambda: self.cond_true_update_weights(log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, i, k),
+            lambda: self.cond_false_update_weights(log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, i, k))
+        k = k + 1
+        return log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, i, k
+
+    def cond_update_weights(self, log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, i, k):
+        return k < self.K
+
+    def body_main(self):
+        return
+
+    def cond_main(self):
+        return
+
+    def sample_phylogenies(self, K):
         """
 
         """
@@ -208,26 +213,25 @@ class VCSMC:
         v = tf.constant(1, shape=(K,), dtype=tf.float64)  # to be used in overcounting_correct
 
         # Iterate over coalescent events
-        for i in range(n - 1):
-            self.i = i
+        for r in range(n - 1):
             # Resampling step
-            if resampling and i > 0:
-                jump_chain_tensor, indices = self.resample(jump_chain_tensor, log_weights[i - 1])
+            if r > 0:
+                jump_chain_tensor, indices = self.resample(jump_chain_tensor, log_weights[r - 1])
                 log_likelihood_tilda = tf.gather_nd(tf.gather(tf.transpose(log_likelihood_tf), indices),
-                                                    [[k, i - 1] for k in range(K)])
+                                                    [[k, r - 1] for k in range(K)])
                 self.jump_chains.append(jump_chain_tensor)
 
             # Extend partial states
             particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, \
             q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor)
 
-            # Save partial set data
+            # Update partial set data
             new_data = tf.constant(np.zeros((1, 1, self.s, self.a)))  # to be used in tf.while_loop
-            new_data, coalesced_indices, k = tf.while_loop(self.cond_update_data, self.body_update_data,
-                                                           loop_vars=[new_data, coalesced_indices, tf.constant(0)],
+            new_data, coalesced_indices, i, k = tf.while_loop(self.cond_update_data, self.body_update_data,
+                                                           loop_vars=[new_data, coalesced_indices, tf.constant(r), tf.constant(0)],
                                                            shape_invariants=[tf.TensorShape([None, 1, self.s, self.a]),
                                                                              coalesced_indices.get_shape(),
-                                                                             tf.TensorShape([])])
+                                                                             tf.TensorShape([]), tf.TensorShape([])])
             new_data = tf.gather(new_data, list(range(1, K + 1)))  # remove the trivial index 0
             shape1 = self.core.shape[0].value * self.core.shape[1].value
             self.core = tf.gather(tf.reshape(self.core, [shape1, self.core.shape[2].value, self.core.shape[3].value]),
@@ -235,21 +239,21 @@ class VCSMC:
             self.core = tf.concat([self.core, new_data], axis=1)
 
             # Comptue weights
-            log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, k = \
+            log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, i, k = \
                 tf.while_loop(self.cond_update_weights, self.body_update_weights,
                               loop_vars=[tf.constant(np.zeros(1)), tf.constant(np.zeros(1)), log_likelihood_tilda,
-                                         coalesced_indices, v, q, tf.constant(0)],
+                                         coalesced_indices, v, q, tf.constant(r), tf.constant(0)],
                               shape_invariants=[tf.TensorShape([None]), tf.TensorShape([None]),
                                                 log_likelihood_tilda.get_shape(), \
                                                 coalesced_indices.get_shape(), tf.TensorShape([None]),
-                                                tf.TensorShape([]), tf.TensorShape([])])
-            log_likelihood[i] = tf.gather(log_likelihood_i, list(range(1, K + 1)))
-            log_weights[i] = tf.gather(log_weights_i, list(range(1, K + 1)))
+                                                tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])])
+            log_likelihood[r] = tf.gather(log_likelihood_i, list(range(1, K + 1)))
+            log_weights[r] = tf.gather(log_weights_i, list(range(1, K + 1)))
             v = tf.gather(v, list(range(K, 2 * K)))
-            log_likelihood_tf = tf.stack([log_likelihood[i] for i in range(n - 1)], axis=0)
+            log_likelihood_tf = tf.stack([log_likelihood[r] for r in range(n - 1)], axis=0)
         # End of iteration
 
-        log_weights = tf.stack([log_weights[i] for i in range(n - 1)], axis=0)
+        log_weights = tf.stack([log_weights[r] for r in range(n - 1)], axis=0)
         elbo = self.compute_log_ZSMC(log_weights)
         self.cost = -elbo
 
