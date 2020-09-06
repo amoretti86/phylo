@@ -1,4 +1,4 @@
-import vcsmc
+import vcsmc as vcsmc
 import numpy as np
 import tensorflow.compat.v1 as tf
 import tensorflow_probability as tfp
@@ -6,9 +6,12 @@ import matplotlib.pyplot as plt
 import pdb
 import operator as op
 from functools import reduce
-from datestr import addDateTime
+from datetime import datetime
+import sys
+import argparse
 import os
 import pickle
+import pandas as pd
 
 
 if __name__ == "__main__":
@@ -16,8 +19,15 @@ if __name__ == "__main__":
     real_data_corona = False
     real_data_1 = False
     real_data_2 = False
+    load_strings = False
     simulate_data = False
-    load_strings = True
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', default='load_strings')
+    parser.add_argument('--memory_optimization', default='on')
+    args = parser.parse_args()
+    
+    exec(args.dataset + '=True')
 
     Alphabet_dir = {'A': [1, 0, 0, 0],
                     'C': [0, 1, 0, 0],
@@ -27,11 +37,7 @@ if __name__ == "__main__":
                     'c': [0, 1, 0, 0],
                     'g': [0, 0, 1, 0],
                     't': [0, 0, 0, 1]}
-
     alphabet = np.array([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]])
-
-    genome_strings = ['ACTTTGAGAG', 'ACTTTGACAG', 'ACTTTGACTG', 'ACTTTGACTC']
-
 
     def simulateDNA(nsamples, seqlength, alphabet):
         genomes_NxSxA = np.zeros([nsamples, seqlength, alphabet.shape[0]])
@@ -39,39 +45,33 @@ if __name__ == "__main__":
             genomes_NxSxA[n] = np.array([random.choice(alphabet) for i in range(seqlength)])
         return genomes_NxSxA
 
-
     def form_dataset_from_strings(genome_strings, alphabet_dir):
-        # pdb.set_trace()
         genomes_NxSxA = np.zeros([len(genome_strings), len(genome_strings[0]), len(alphabet_dir)])
         for i in range(genomes_NxSxA.shape[0]):
             for j in range(genomes_NxSxA.shape[1]):
                 genomes_NxSxA[i, j] = alphabet_dir[genome_strings[i][j]]
-
         taxa = ['S' + str(i) for i in range(genomes_NxSxA.shape[0])]
-
         datadict = {'taxa': taxa,
                     'genome': genomes_NxSxA}
         return datadict
 
-
-    dim = 4
-
     if simulate_data:
         data_NxSxA = simulateDNA(3, 5, alphabet)
         # print("Simulated genomes:\n", data_NxSxA)
-
         taxa = ['S' + str(i) for i in range(data_NxSxA.shape[0])]
-        # print(taxa)
-
         datadict = {'taxa': taxa,
                     'genome': data_NxSxA}
 
     if load_strings:
+        genome_strings = ['ACTTTGAGAG', 'ACTTTGACAG', 'ACTTTGACTG', 'ACTTTGACTC']
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
     if real_data_corona:
-        datadict = pd.read_pickle('tencovid.p')
-        dim = 6
+        max_site = 300
+        datadict_raw = pd.read_pickle('betacoronavirus/betacoronavirus4.pickle')
+        datadict = {}
+        datadict['taxa'] = datadict_raw['taxa']
+        datadict['genome'] = np.array(datadict_raw['genome'])[:,0:max_site,:]
 
     if real_data_1:
         genome_strings = \
@@ -101,16 +101,19 @@ if __name__ == "__main__":
         datadict['taxa'] = ['human', 'chimp', 'gorilla', 'oranguta', 'gibbon', 'rhesus', 'macaque', 'baboon',
                             'greenmonkey']
 
+
+
     vcsmc = vcsmc.VCSMC(datadict)
 
-    if dim == 6:
-        vcsmc.Qmatrix = np.array([[-5., 1., 1., 1., 1., 1.],
-                                 [1., -5., 1., 1., 1., 1.],
-                                 [1., 1., -5., 1., 1., 1.],
-                                 [1., 1., 1., -5., 1., 1.],
-                                 [1., 1., 1., 1., -5., 1.],
-                                 [1., 1., 1., 1., 1., -5.]])
-        vcsmc.Pmatrix = spl.expm(vcsmc.Qmatrix)
-        vcsmc.prior = np.ones(vcsmc.Qmatrix.shape[0]) / vcsmc.Qmatrix.shape[0]
+    vcsmc.train(100, memory_optimization=args.memory_optimization)
 
-    vcsmc.train(100)
+
+
+
+
+
+
+
+
+
+
