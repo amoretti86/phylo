@@ -34,11 +34,11 @@ class VCSMC:
     def __init__(self, datadict):
         self.taxa = datadict['taxa']
         self.genome_NxSxA = datadict['genome']
-        self.n = len(self.genome_NxSxA)
-        self.s = len(self.genome_NxSxA[0])
-        self.a = len(self.genome_NxSxA[0, 0])
-        self.y_q = tf.linalg.set_diag(tf.Variable(np.zeros((self.a, self.a))+1/self.a, dtype=tf.float64), [0]*self.a)
-        self.y_station = tf.Variable(np.zeros(self.a)+1/self.a, dtype=tf.float64)
+        self.N = len(self.genome_NxSxA)
+        self.S = len(self.genome_NxSxA[0])
+        self.A = len(self.genome_NxSxA[0, 0])
+        self.y_q = tf.linalg.set_diag(tf.Variable(np.zeros((self.A, self.A))+1/self.A, dtype=tf.float64), [0]*self.A)
+        self.y_station = tf.Variable(np.zeros(self.A)+1/self.A, dtype=tf.float64)
         self.stationary_probs = self.get_stationary_probs()
         self.Qmatrix = self.get_Q()
         self.learning_rate = tf.placeholder(dtype=tf.float64, shape=[])
@@ -48,9 +48,9 @@ class VCSMC:
         return tf.expand_dims(tf.exp(self.y_station) / denom, axis=0)
 
     def get_Q(self):
-        denom = tf.reduce_sum(tf.linalg.set_diag(tf.exp(self.y_q), [0]*self.a), axis=1)
-        denom = tf.stack([denom]*self.a, axis=1)
-        q_entry = tf.multiply(tf.linalg.set_diag(tf.exp(self.y_q), [0]*self.a), 1/denom)
+        denom = tf.reduce_sum(tf.linalg.set_diag(tf.exp(self.y_q), [0]*self.A), axis=1)
+        denom = tf.stack([denom]*self.A, axis=1)
+        q_entry = tf.multiply(tf.linalg.set_diag(tf.exp(self.y_q), [0]*self.A), 1/denom)
         hyphens = tf.reduce_sum(q_entry, axis=1)
         Q = tf.linalg.set_diag(q_entry, -hyphens)
         return Q
@@ -71,16 +71,16 @@ class VCSMC:
         """
         # Compute combinatorial term
         # pdb.set_trace()
-        q = 1 / ncr(self.n - r, 2)
-        data = tf.reshape(tf.range((self.n - r) * self.K), (self.K, self.n - r))
-        data = tf.mod(data, (self.n - r))
+        q = 1 / ncr(self.N - r, 2)
+        data = tf.reshape(tf.range((self.N - r) * self.K), (self.K, self.N - r))
+        data = tf.mod(data, (self.N - r))
         data = tf.cast(data, dtype=tf.float32)
         # Gumbel-max trick to sample without replacement
         z = -tf.math.log(-tf.math.log(tf.random.uniform(tf.shape(data), 0, 1)))
         top_values, coalesced_indices = tf.nn.top_k(data + z, 2)
-        bottom_values, remaining_indices = tf.nn.top_k(tf.negative(data + z), self.n - r - 2)
-        JC_keep = tf.gather(tf.reshape(JCK, [self.K * (self.n - r)]), remaining_indices)
-        particles = tf.gather(tf.reshape(JCK, [self.K * (self.n - r)]), coalesced_indices)
+        bottom_values, remaining_indices = tf.nn.top_k(tf.negative(data + z), self.N - r - 2)
+        JC_keep = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), remaining_indices)
+        particles = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), coalesced_indices)
         particle1 = particles[:, 0]
         particle2 = particles[:, 1]
         # Form new state
@@ -115,7 +115,7 @@ class VCSMC:
         """
         idx1 = tf.gather(indices, 0)
         idx2 = tf.gather(indices, 1)
-        threshold = self.n - i - 1
+        threshold = self.N - i - 1
         cond_greater = tf.where(tf.logical_and(idx1 > threshold, idx2 > threshold), -1., 0.)
         result = tf.where(tf.logical_and(idx1 < threshold, idx2 < threshold), 1., cond_greater)
         v = tf.add(v, tf.cast(result, tf.float64))
@@ -152,7 +152,7 @@ class VCSMC:
         return log_likelihood_i_k, core, i, k, j
 
     def cond_compute_forest(self, log_likelihood_i_k, core, i, k, j):
-        return j < self.n - 1 - i
+        return j < self.N - 1 - i
 
     def cond_true_update_weights(self, log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, v, q, i, k):
         v = tf.concat([v, [self.overcounting_correct(tf.gather(v, k), tf.gather(coalesced_indices, k), i)]], axis=0)
@@ -201,14 +201,14 @@ class VCSMC:
         q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor, r)
 
         # Update partial set data
-        new_data = tf.constant(np.zeros((1, 1, self.s, self.a)))  # to be used in tf.while_loop
+        new_data = tf.constant(np.zeros((1, 1, self.S, self.A)))  # to be used in tf.while_loop
         new_data, core_, coalesced_indices, i, k = tf.while_loop(self.cond_update_data, self.body_update_data,
                                                        loop_vars=[new_data, core, coalesced_indices, r, tf.constant(0)],
-                                                       shape_invariants=[tf.TensorShape([None, 1, self.s, self.a]), 
+                                                       shape_invariants=[tf.TensorShape([None, 1, self.S, self.A]), 
                                                                          core.get_shape(), coalesced_indices.get_shape(),
                                                                          tf.TensorShape([]), tf.TensorShape([])])
         new_data = tf.gather(new_data, tf.range(1, self.K + 1)) # remove the trivial index 0
-        core = tf.gather(tf.reshape(core, [self.K * (self.n - r), self.s, self.a]), remaining_indices)
+        core = tf.gather(tf.reshape(core, [self.K * (self.N - r), self.S, self.A]), remaining_indices)
         core = tf.concat([core, new_data], axis=1)
 
         # Comptue weights
@@ -227,16 +227,18 @@ class VCSMC:
         return log_weights, log_likelihood, log_likelihood_tilda, jump_chains, jump_chain_tensor, core, v, r
 
     def cond_main(self, log_weights, log_likelihood, log_likelihood_tilda, jump_chains, jump_chain_tensor, core, v, r):
-        return r < self.n - 1
+        return r < self.N - 1
 
     def sample_phylogenies(self, K):
         """
 
         """
-        n = self.n
-        s = self.s
-        a = self.a
+        N = self.N
+        S = self.S
+        A = self.A
         self.K = K
+
+        self.core = tf.placeholder(dtype=tf.float64, shape=(K, N, S, A))
 
         log_weights = tf.constant(0, shape=(1, K), dtype=tf.float64)
         log_likelihood = tf.constant(0, shape=(1, K), dtype=tf.float64)
@@ -244,23 +246,22 @@ class VCSMC:
 
         self.jump_chains = tf.constant('', shape=(K, 1))
         jump_chain_tensor = tf.constant([self.taxa] * K, name='JumpChainK')
-        self.core = tf.constant(np.array([self.genome_NxSxA] * K))
-        self.left_branches = tf.Variable(np.zeros((K, n - 1)) + 1, dtype=tf.float64,
+        self.left_branches = tf.Variable(np.zeros((K, N - 1)) + 1, dtype=tf.float64,
                                          constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6))
-        self.right_branches = tf.Variable(np.zeros((K, n - 1)) + 1, dtype=tf.float64,
+        self.right_branches = tf.Variable(np.zeros((K, N - 1)) + 1, dtype=tf.float64,
                                           constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6))
         v = tf.constant(1, shape=(K,), dtype=tf.float64)  # to be used in overcounting_correct
 
-        log_weights, log_likelihood, log_likelihood_tilda, self.jump_chains, jump_chain_tensor, self.core, v, r = \
+        log_weights, log_likelihood, log_likelihood_tilda, self.jump_chains, jump_chain_tensor, core_final, v, r = \
           tf.while_loop(self.cond_main, self.body_main, 
             loop_vars=[log_weights, log_likelihood, log_likelihood_tilda, self.jump_chains, 
                        jump_chain_tensor, self.core, v, tf.constant(0)],
             shape_invariants=[tf.TensorShape([None, K]), tf.TensorShape([None, K]), log_likelihood_tilda.get_shape(),
-                              tf.TensorShape([K, None]), tf.TensorShape([K, None]), tf.TensorShape([K, None, s, a]), 
+                              tf.TensorShape([K, None]), tf.TensorShape([K, None]), tf.TensorShape([K, None, S, A]), 
                               v.get_shape(), tf.TensorShape([])])
 
-        log_weights = tf.gather(log_weights, list(range(1, n))) # remove the trivial index 0
-        log_likelihood = tf.gather(log_likelihood, list(range(1, n))) # remove the trivial index 0
+        log_weights = tf.gather(log_weights, list(range(1, N))) # remove the trivial index 0
+        log_likelihood = tf.gather(log_likelihood, list(range(1, N))) # remove the trivial index 0
         elbo = self.compute_log_ZSMC(log_weights)
         self.cost = -elbo
         self.log_weights = log_weights
@@ -277,17 +278,18 @@ class VCSMC:
             off = rewriter_config_pb2.RewriterConfig.OFF
             config.graph_options.rewrite_options.memory_optimization = off
 
+        bt = datetime.now()
         self.sample_phylogenies(K)
-        print('===================\nFinished constructing computational graph!\n===================')
+        at = datetime.now()
+        print('===================\nFinished constructing computational graph!', '\nTime spent:', at-bt, '\n===================')
 
         self.optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+        feed_data = np.array([self.genome_NxSxA] * K, dtype=np.double)
 
         sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
-        # print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
-        print('===================\nInitial evaluation of ELBO:', 
-            round(sess.run(-self.cost), 3), '\n===================')
+        print('===================\nInitial evaluation of ELBO:', round(sess.run(-self.cost, feed_dict={self.core: feed_data}), 3), '\n===================')
         print('Training begins --')
         elbos = []
         Qmatrices = []
@@ -295,24 +297,27 @@ class VCSMC:
         right_branches = []
         jump_chain_evolution = []
         for i in range(numIters):
+            bt = datetime.now()
             if i < 20:
-                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.learning_rate: 0.1})
+                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: feed_data, self.learning_rate: 0.1})
             elif i > 200:
-                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.learning_rate: 0.001})
+                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: feed_data, self.learning_rate: 0.001})
             else:
-                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.learning_rate: 0.01})
+                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: feed_data, self.learning_rate: 0.01})
             # Plot the ELBO, log_ZSMC which is -cost
             elbos.append(-cost)
             print('Epoch', i+1)
             print('ELBO\n', round(-cost, 3))
             print('Q-matrix\n', sess.run(self.Qmatrix))
             print('Left branches (for five particles)\n', sess.run(tf.gather(self.left_branches, [0, int(K/4), int(K/2), int(3*K/4), K-1])))
-            print('Right branches (for five particles)\n', sess.run(tf.gather(self.right_branches, [0, int(K/4), int(K/2), int(3*K/4), K-1])), '\n-------------------------')
+            print('Right branches (for five particles)\n', sess.run(tf.gather(self.right_branches, [0, int(K/4), int(K/2), int(3*K/4), K-1])))
             Qmat = sess.run(self.Qmatrix)
             Qmatrices.append(Qmat)
             left_branches.append(sess.run(self.left_branches))
             right_branches.append(sess.run(self.left_branches))
-            jump_chain_evolution.append(sess.run(self.jump_chains))
+            jump_chain_evolution.append(sess.run(self.jump_chains, feed_dict={self.core: feed_data}))
+            at = datetime.now()
+            print('Time spent\n', at-bt, '\n--------------------------')
         print("Done training.")
 
         # Create local directory and save experiment results
@@ -337,7 +342,7 @@ class VCSMC:
                       'cost': np.asarray(elbos),
                       'nParticles': self.K,
                       #'lr': self.learning_rate,
-                      'nTaxa': self.n,
+                      'nTaxa': self.N,
                       'left_branches': np.asarray(left_branches),
                       'right_branches': np.asarray(right_branches),
                       'jump_chain_evolution': jump_chain_evolution}
