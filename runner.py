@@ -13,20 +13,22 @@ import os
 import pickle
 import pandas as pd
 
-
 if __name__ == "__main__":
+
+    print("Mic Check")
 
     real_data_corona = False
     real_data_1 = False
     real_data_2 = False
     load_strings = False
     simulate_data = False
+    primate_data = True
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', default='load_strings')
+    parser.add_argument('--dataset', default='primage_data')
     parser.add_argument('--memory_optimization', default='on')
     args = parser.parse_args()
-    
+
     exec(args.dataset + '=True')
 
     Alphabet_dir = {'A': [1, 0, 0, 0],
@@ -39,11 +41,15 @@ if __name__ == "__main__":
                     't': [0, 0, 0, 1]}
     alphabet = np.array([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]])
 
+
+
+
     def simulateDNA(nsamples, seqlength, alphabet):
         genomes_NxSxA = np.zeros([nsamples, seqlength, alphabet.shape[0]])
         for n in range(nsamples):
             genomes_NxSxA[n] = np.array([random.choice(alphabet) for i in range(seqlength)])
         return genomes_NxSxA
+
 
     def form_dataset_from_strings(genome_strings, alphabet_dir):
         genomes_NxSxA = np.zeros([len(genome_strings), len(genome_strings[0]), len(alphabet_dir)])
@@ -54,6 +60,7 @@ if __name__ == "__main__":
         datadict = {'taxa': taxa,
                     'genome': genomes_NxSxA}
         return datadict
+
 
     if simulate_data:
         data_NxSxA = simulateDNA(3, 5, alphabet)
@@ -71,7 +78,7 @@ if __name__ == "__main__":
         datadict_raw = pd.read_pickle('betacoronavirus/betacoronavirus4.pickle')
         datadict = {}
         datadict['taxa'] = datadict_raw['taxa']
-        datadict['genome'] = np.array(datadict_raw['genome'])[:,0:max_site,:]
+        datadict['genome'] = np.array(datadict_raw['genome'])[:, 0:max_site, :]
 
     if real_data_1:
         genome_strings = \
@@ -101,19 +108,23 @@ if __name__ == "__main__":
         datadict['taxa'] = ['human', 'chimp', 'gorilla', 'oranguta', 'gibbon', 'rhesus', 'macaque', 'baboon',
                             'greenmonkey']
 
+    if primate_data:
+        Alphabet_dir_blank = {'A': [1, 0, 0, 0, 0],
+                              'C': [0, 1, 0, 0, 0],
+                              'G': [0, 0, 1, 0, 0],
+                              'T': [0, 0, 0, 1, 0],
+                              '-': [0, 0, 0, 0, 1]}
 
+        #pdb.set_trace()
+        datadict_raw = pd.read_pickle('data/primate.p')
+        # max_site = 898
+        datadict = {}
+        datadict['taxa'] = datadict_raw.keys()
+        datadict['genome'] = np.array(datadict_raw.values())
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
 
-    vcsmc = vcsmc.VCSMC(datadict)
+    #pdb.set_trace()
+    vcsmc = vcsmc.VCSMC(datadict,K=100)
 
-    vcsmc.train(100, memory_optimization=args.memory_optimization)
-
-
-
-
-
-
-
-
-
-
-
+    vcsmc.train(numIters=100, memory_optimization=args.memory_optimization)
