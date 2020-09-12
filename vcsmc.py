@@ -76,7 +76,10 @@ class VCSMC:
         Resample partial states by drawing from a categorical distribution whose parameters are normalized importance weights
         JumpChain (JC_K) is a tensor formed from a numpy array of lists of strings, returns a resampled JumpChain tensor
         """
-        indices = tf.squeeze(tf.random.categorical(tf.expand_dims(log_weights, axis=0), self.K))
+        #pdb.set_trace()
+        log_normalized_weights = log_weights - tf.reduce_logsumexp(log_weights)
+        #indices = tf.squeeze(tf.random.categorical(tf.expand_dims(log_weights, axis=0), self.K))
+        indices = tf.squeeze(tf.random.categorical(tf.expand_dims(log_normalized_weights, axis=0), self.K))
         resampled_core = tf.gather(core, indices)
         resampled_record = tf.gather(leafnode_record, indices)
         resampled_JC_K = tf.gather(JC_K, indices)
@@ -188,6 +191,7 @@ class VCSMC:
         new_log_weight = tf.gather(log_likelihood_i, k + 1) - tf.gather(log_likelihood_tilda, k) + \
                          tf.math.log(tf.cast(tf.gather(v, k + self.K), tf.float64)) - \
                          tf.math.log(tf.cast(q, tf.float64))
+        #normalized_new_log_weight = new_log_weight - tf.reduce_logsumexp(new_log_weight)
         log_weights_i = tf.concat([log_weights_i, [new_log_weight]], axis=0)
         return v, log_weights_i
 
@@ -271,6 +275,7 @@ class VCSMC:
 
     def sample_phylogenies(self):
         """
+        Main sampler that performs SMC by calling while conditions to iterate over rank events and particles
         """
         N = self.N
         S = self.S
@@ -324,7 +329,8 @@ class VCSMC:
         at = datetime.now()
         print('===================\nFinished constructing computational graph!', '\nTime spent:', at-bt, '\n===================')
 
-        self.optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+        #self.optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
         feed_data = np.array([self.genome_NxSxA] * K, dtype=np.double)
 
         sess = tf.Session(config=config)
@@ -343,7 +349,7 @@ class VCSMC:
         for i in range(numIters):
             bt = datetime.now()
             if i < 20:
-                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: feed_data, self.learning_rate: 0.05})
+                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: feed_data, self.learning_rate: 0.01})
             elif i > 200:
                 _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: feed_data, self.learning_rate: 0.001})
             else:
@@ -408,7 +414,7 @@ class VCSMC:
         resultDict = {'cost': np.asarray(elbos),
                       'nParticles': self.K,
                       'nTaxa': self.N,
-                      #'lr': self.learning_rate,
+                      'lr': self.learning_rate,
                       'log_weights': np.asarray(log_weights),
                       'Qmatrices': np.asarray(Qmatrices),
                       'left_branches': np.asarray(left_branches),
