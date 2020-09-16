@@ -1,21 +1,9 @@
 import vcsmc as vcsmc
 import numpy as np
-import tensorflow.compat.v1 as tf
-import tensorflow_probability as tfp
-import matplotlib.pyplot as plt
-import pdb
-import operator as op
-from functools import reduce
-from datetime import datetime
-import sys
 import argparse
-import os
-import pickle
 import pandas as pd
 
 if __name__ == "__main__":
-
-    print("Mic Check")
 
     real_data_corona = False
     real_data_1 = False
@@ -25,7 +13,7 @@ if __name__ == "__main__":
     primate_data = True
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', default='primage_data')
+    parser.add_argument('--dataset', default='primate_data')
     parser.add_argument('--memory_optimization', default='on')
     args = parser.parse_args()
 
@@ -125,6 +113,6 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
 
     #pdb.set_trace()
-    vcsmc = vcsmc.VCSMC(datadict,K=100)
+    vcsmc = vcsmc.VCSMC(datadict,K=64)
 
-    vcsmc.train(numIters=100, memory_optimization=args.memory_optimization)
+    vcsmc.train(numIters=200, memory_optimization=args.memory_optimization)
