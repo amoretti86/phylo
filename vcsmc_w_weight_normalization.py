@@ -27,7 +27,7 @@ def double_factorial(n):
     return tf.reduce_prod(tf.range(n, 0, -2))
 
 
-# branches = self.q_branches.sample('A Certain Number')
+
 class VCSMC:
     """
     VCSMC takes as input a dictionary (datadict) with two keys:
@@ -46,10 +46,12 @@ class VCSMC:
         # This term should probably be trainable
         self.y_station = tf.constant(np.zeros(self.A)+1/self.A, dtype=tf.float64, name='Stationary_probs')
         #self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
-        self.l = tf.Variable(1., dtype=tf.float64, constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e8), name='l')
+        self.l = tf.Variable(10., dtype=tf.float64, constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e8), name='l')
         self.q_branches = tfp.distributions.Exponential(rate=self.l)
         self.left_branches = self.q_branches.sample((self.K, self.N - 1))
         self.right_branches = self.q_branches.sample((self.K, self.N - 1))
+        self.left_branches = tf.constant(np.zeros((self.K, self.N - 1)) + 0.1)
+        self.right_branches = tf.constant(np.zeros((self.K, self.N - 1)) + 0.1)
         self.stationary_probs = self.get_stationary_probs()
         self.Qmatrix = self.get_Q()
         self.learning_rate = tf.placeholder(dtype=tf.float64, shape=[])
@@ -130,7 +132,6 @@ class VCSMC:
         tree_likelihood = tf.matmul(self.stationary_probs, data, transpose_b=True)
         data_loglik = tf.reduce_sum(tf.log(tree_likelihood))
         tree_logprior = tf.log(1 / double_factorial(2 * tf.maximum(leafnode_num, 2) - 3))
-
         return data_loglik + tree_logprior
 
     def overcounting_correct(self, v, indices, i):
@@ -151,9 +152,9 @@ class VCSMC:
         Z_SMC is formed by averaging over weights and multiplying over coalescent events
         """
         #pdb.set_trace()
-        log_Z_SMC = tf.reduce_sum(tf.reduce_logsumexp(log_weights - tf.log(tf.cast(self.K, tf.float64)), axis=1))
+        #log_Z_SMC = tf.reduce_sum(tf.reduce_logsumexp(log_weights - tf.log(tf.cast(self.K, tf.float64)), axis=1))
         # disregard this... trying different things to find bug...
-        # log_Z_SMC = tf.reduce_sum(tf.gather(log_pi,self.N-1))
+        log_Z_SMC = tf.reduce_sum(tf.gather(log_pi,self.N-2))
         return log_Z_SMC
 
     def body_update_data(self, new_data, new_record, core, leafnode_record, coalesced_indices, i, k):
@@ -202,7 +203,6 @@ class VCSMC:
         v_minus = tf.math.log(1 / tf.cast(tf.gather(v, k + self.K), tf.float64))
         l_branch = tf.squeeze(tf.gather_nd(self.left_branches, [[k, i]]))
         r_branch = tf.squeeze(tf.gather_nd(self.right_branches, [[k, i]]))
-        # What are these extra terms in v_plus (after log q)? Not sure they are necessary...
         v_plus = tf.math.log(tf.cast(q, tf.float64)) + tf.log(self.l) - self.l * l_branch + tf.log(self.l) - self.l * r_branch
         new_log_weight = tf.gather(log_likelihood_i, k + 1) - tf.gather(log_likelihood_tilda, k) + v_minus - v_plus
         log_weights_i = tf.concat([log_weights_i, [new_log_weight]], axis=0)
@@ -213,7 +213,6 @@ class VCSMC:
         v_minus = tf.math.log(1 / tf.cast(tf.gather(v, k + self.K), tf.float64))
         l_branch = tf.squeeze(tf.gather_nd(self.left_branches, [[k, i]]))
         r_branch = tf.squeeze(tf.gather_nd(self.right_branches, [[k, i]]))
-        # What are these extra terms in v_plus (after log q)? Not sure they are necessary...
         v_plus = tf.log(tf.cast(q, tf.float64)) + tf.log(self.l) - self.l * l_branch + tf.log(self.l) - self.l * r_branch
         new_log_weight = tf.gather(log_likelihood_i, k + 1) - tf.gather(log_likelihood_tilda, k) + v_minus - v_plus
         log_weights_i = tf.concat([log_weights_i, [new_log_weight]], axis=0)
@@ -281,7 +280,6 @@ class VCSMC:
         leafnode_record = tf.concat([leafnode_record, new_record], axis=1)
 
         # Comptue weights
-
         log_weights_i, log_likelihood_i, log_likelihood_tilda, coalesced_indices, core_, leafnode_record_, v, q, i, k = \
             tf.while_loop(self.cond_update_weights, self.body_update_weights,
                           loop_vars=[tf.constant(np.zeros(1)), tf.constant(np.zeros(1)), log_likelihood_tilda,
@@ -293,14 +291,14 @@ class VCSMC:
 
         #pdb.set_trace()
         log_weights = tf.concat([log_weights, [tf.gather(log_weights_i, tf.range(1, self.K + 1))]], axis=0)
-        norm_log_weights = log_weights - tf.reduce_logsumexp(log_weights,axis=1)
+        #norm_log_weights = log_weights - tf.reduce_logsumexp(log_weights,axis=1)
 
         # normalize the log weights to compute log || pi_r-1,k || and pi_r,k
-        normalized_log_weights = tf.gather(log_weights,r-1) - tf.reduce_logsumexp(tf.gather(log_weights,r-1))
-        log_pi_r = normalized_log_weights - tf.reduce_logsumexp(tf.gather(log_weights,r)) - tf.log(tf.cast(self.K,tf.float64))
+        normalized_log_weights = tf.gather(log_weights,r) - tf.reduce_logsumexp(tf.gather(log_weights,r))
+        log_pi_r = normalized_log_weights + tf.reduce_logsumexp(tf.gather(log_weights,r+1)) - tf.log(tf.cast(self.K,tf.float64))
         log_pi = tf.concat([log_pi, [log_pi_r]], axis=0)
 
-        log_likelihood = tf.concat([log_likelihood, [tf.gather(log_likelihood_i, tf.range(1, self.K + 1))]], axis=0) # pi(s) = pi(Y|t, b, theta) * pi(t, b|theta) / pi(Y)
+        log_likelihood = tf.concat([log_likelihood, [tf.gather(log_likelihood_i, tf.range(1, self.K + 1))]], axis=0)
         v = tf.gather(v, tf.range(self.K, 2 * self.K))
         r = r + 1
         return log_weights, log_likelihood, log_likelihood_tilda, jump_chains, jump_chain_tensor, core, leafnode_record, log_pi, v, r
@@ -331,7 +329,7 @@ class VCSMC:
         leafnode_record = tf.constant(1, shape=(K, N), dtype=tf.int32) # Keeps track of self.core
 
         log_weights = tf.constant(0, shape=(1, K), dtype=tf.float64)
-        log_pi = tf.constant(0, shape=(1,K), dtype=tf.float64)
+        log_pi = tf.constant(0, shape=(1, K), dtype=tf.float64)
         log_likelihood = tf.constant(0, shape=(1, K), dtype=tf.float64)
         log_likelihood_tilda = tf.constant(np.zeros(1), dtype=tf.float64)
         log_likelihood_tilda, core_, leafnode_record_, i, k = tf.while_loop(self.cond_initialize_tilda, self.body_initialize_tilda,
