@@ -361,7 +361,7 @@ class VCSMC:
         """
         K = self.K
         self.lr = 0.001
-
+        logs_dir = './event_logs_new'
         config = tf.ConfigProto()
         if memory_optimization == 'off':
             from tensorflow.core.protobuf import rewriter_config_pb2
@@ -380,6 +380,7 @@ class VCSMC:
         sess.run(init)
         print('===================\nInitial evaluation of ELBO:', round(sess.run(-self.cost, feed_dict={self.core: feed_data}), 3), '\n===================')
         print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
+        writer = tf.summary.FileWriter(logs_dir, sess.graph)
         print('Training begins --')
         elbos = []
         Qmatrices = []
@@ -425,6 +426,7 @@ class VCSMC:
             at = datetime.now()
             print('Time spent\n', at-bt, '\n-----------------------------------------')
         print("Done training.")
+        writer.close()
 
         # Create local directory and save experiment results
         tm = str(datetime.now())
