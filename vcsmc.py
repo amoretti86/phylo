@@ -360,7 +360,7 @@ class VCSMC:
         Run the train op in a TensorFlow session and evaluate variables
         """
         K = self.K
-        self.lr = 0.01
+        self.lr = 0.001
 
         config = tf.ConfigProto()
         if memory_optimization == 'off':
@@ -396,24 +396,32 @@ class VCSMC:
             elbos.append(-cost)
             print('Epoch', i+1)
             print('ELBO\n', round(-cost, 3))
-            print('Q-matrix\n', sess.run(self.Qmatrix))
+            Qs = sess.run(self.Qmatrix)
+            print('Q-matrix\n', Qs)
             print('Stationary probabilities\n', sess.run(self.stationary_probs))
             # print('Left branches (for five particles)\n', sess.run(tf.gather(self.left_branches, [0, int(K/4), int(K/2), int(3*K/4), K-1])))
             # print('Right branches (for five particles)\n', sess.run(tf.gather(self.right_branches, [0, int(K/4), int(K/2), int(3*K/4), K-1])))
-            print('Left branches\n', sess.run(self.left_branches))
-            print('Right branches\n', sess.run(self.right_branches))
+            lb = np.round(sess.run(self.left_branches),3)
+            rb = np.round(sess.run(self.right_branches),3)
+            print('Left branches\n', lb)
+            print('Right branches\n', rb)
             print('Prior for branches\n', sess.run(self.l))
             print('Overcounting\n', sess.run(self.v, feed_dict={self.core: feed_data}))
-            print('Log Weights\n', sess.run(self.log_weights, feed_dict={self.core: feed_data}))
-            print('Log likelihood\n', sess.run(self.log_likelihood, feed_dict={self.core: feed_data}))
-            print('Log likelihood tilda\n', sess.run(self.log_likelihood_tilda, feed_dict={self.core: feed_data}))
-            Qmatrices.append(sess.run(self.Qmatrix))
-            left_branches.append(sess.run(self.left_branches))
-            right_branches.append(sess.run(self.left_branches))
-            ll.append(sess.run(self.log_likelihood, feed_dict={self.core: feed_data}))
-            ll_tilda.append(sess.run(self.log_likelihood_tilda, feed_dict={self.core: feed_data}))
-            log_weights.append(sess.run(self.log_weights, feed_dict={self.core: feed_data}))
-            jump_chain_evolution.append(sess.run(self.jump_chains, feed_dict={self.core: feed_data}))
+            log_Ws = np.round(sess.run(self.log_weights, feed_dict={self.core: feed_data}),3)
+            print('Log Weights\n', log_Ws)
+            log_liks = sess.run(self.log_likelihood, feed_dict={self.core: feed_data})
+            log_lik_tilde = sess.run(self.log_likelihood_tilda, feed_dict={self.core: feed_data})
+            print('Log likelihood\n', np.round(log_liks,3))
+            print('Log likelihood tilda\n', np.round(log_lik_tilde,3))
+            Qmatrices.append(Qs)
+            left_branches.append(lb)
+            right_branches.append(rb)
+            ll.append(log_liks)
+            ll_tilda.append(log_lik_tilde)
+            log_weights.append(log_Ws)
+            #pdb.set_trace()
+            jc = sess.run(self.jump_chains, feed_dict={self.core: feed_data})
+            jump_chain_evolution.append(jc)
             at = datetime.now()
             print('Time spent\n', at-bt, '\n-----------------------------------------')
         print("Done training.")
@@ -448,7 +456,8 @@ class VCSMC:
 
         #pdb.set_trace()
         # Save best log-likelihood value and jump chain
-        best_log_lik = np.asarray(ll)[np.argmax(elbos)].shape
+        best_log_lik = np.asarray(ll)[np.argmax(elbos),-1]#.shape
+        print("Best log likelihood values:\n", best_log_lik)
         best_jump_chain = jump_chain_evolution[np.argmax(elbos)]
 
         resultDict = {'cost': np.asarray(elbos),
