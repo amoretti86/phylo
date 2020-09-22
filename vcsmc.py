@@ -216,11 +216,7 @@ class VCSMC:
         j = j + 1
         return log_likelihood_i_k, core, leafnode_record, i, k, j
 
-    def compute_prob_state(self, log_likelihood_i_k, core, leafnode_record, i,k,j):
-        """
-        Does something smarter than the natural forest extension
-        """
-        #data = tf.squeeze(tf.gather_nd(core, [[k.]]))
+    def compute_prob_state(self, log_likelihood_i_k, core, leafnode_record, i,k):
         pass
 
     def cond_compute_forest(self, log_likelihood_i_k, core, leafnode_record, i, k, j):
