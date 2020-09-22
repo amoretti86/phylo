@@ -14,7 +14,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', default='primate_data')
-    parser.add_argument('--memory_optimization', default='on')
+    parser.add_argument('--memory_optimization', default='off')
     args = parser.parse_args()
 
     exec(args.dataset + '=True')
@@ -113,6 +113,6 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
 
     #pdb.set_trace()
-    vcsmc = vcsmc.VCSMC(datadict,K=64)
+    vcsmc = vcsmc.VCSMC(datadict,K=16)
 
-    vcsmc.train(numIters=200, memory_optimization=args.memory_optimization)
+    vcsmc.train(numIters=1000, memory_optimization=args.memory_optimization)
