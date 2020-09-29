@@ -5,9 +5,6 @@ An implementation of the Variational Combinatorial Sequential Monte Carlo for Ba
   and perform Bayesian phylogenetic inference.
 """
 
-# Based on v5; changes branch-lengths, ahd prints out log_likelihood_R that 
-# has prior stuff removed in order to compare with other models' results
-
 import numpy as np
 import tensorflow.compat.v1 as tf
 import tensorflow_probability as tfp
@@ -154,7 +151,7 @@ class VCSMC:
         r_multiplier = tf.expand_dims(tf.log(self.left_branches_param), axis=0)
         left_branches_logprior = tf.reduce_sum(l_multiplier - l_exponent, axis=1)
         right_branches_logprior = tf.reduce_sum(r_multiplier - r_exponent, axis=1)
-        log_likelihood_R = tf.gather(log_likelihood, self.N-2) - \
+        log_likelihood_R = tf.gather(log_likelihood, self.N-1) - \
           tf.log(1 / double_factorial(2 * self.N - 3)) - \
           left_branches_logprior - right_branches_logprior
         return log_likelihood_R          
@@ -523,6 +520,7 @@ class VCSMC:
                       'right_branches': right_branches,
                       'log_lik': np.asarray(ll),
                       'll_tilde': np.asarray(ll_tilde),
+                      'log_lik_R': np.asarray(ll_R),
                       'jump_chain_evolution': jump_chain_evolution,
                       'best_epoch' : np.argmax(elbos),
                       'best_log_lik': best_log_lik,
