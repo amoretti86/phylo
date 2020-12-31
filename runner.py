@@ -7,13 +7,11 @@ import pandas as pd
 
 if __name__ == "__main__":
 
+    primate_data = False
     corona_data = False
-    real_data_1 = False
-    real_data_2 = False
+    hohna_data = False
     load_strings = False
     simulate_data = False
-    simulate_load_data = False
-    primate_data = False
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', default='load_strings')
@@ -30,6 +28,11 @@ if __name__ == "__main__":
                     'c': [0, 1, 0, 0],
                     'g': [0, 0, 1, 0],
                     't': [0, 0, 0, 1]}
+    Alphabet_dir_blank = {'A': [1, 0, 0, 0, 0],
+                          'C': [0, 1, 0, 0, 0],
+                          'G': [0, 0, 1, 0, 0],
+                          'T': [0, 0, 0, 1, 0],
+                          '-': [0, 0, 0, 0, 1]}
     alphabet = np.array([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]])
 
 
@@ -50,29 +53,16 @@ if __name__ == "__main__":
                     'genome': genomes_NxSxA}
         return datadict
 
+    if hohna_data:
+        datadict_raw = pd.read_pickle('data/hohna_datasets/DS1.pickle')
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
+        print(datadict['genome'].shape)
 
-    if simulate_data:
-        data_NxSxA = simulateDNA(3, 5, alphabet)
-        # print("Simulated genomes:\n", data_NxSxA)
-        taxa = ['S' + str(i) for i in range(data_NxSxA.shape[0])]
-        datadict = {'taxa': taxa,
-                    'genome': data_NxSxA}
-
-    if simulate_load_data:
-        df = pd.read_csv('rdm_3.csv')
-        genome_strings = []
-        for i in range(1,4):
-            genome_strings.append(df.iat[0,1])
-        datadict = form_dataset_from_strings(genome_strings, alphabet_dir)
-
-
-    if load_strings:
-        genome_strings = ['ACTTTGAGAG', 'ACTTTGACAG', 'ACTTTGACTG', 'ACTTTGACTC']
-        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
     if corona_data:
         #max_site = 300
-        datadict_raw = pd.read_pickle('data/betacoronavirus4.pickle')
+        datadict_raw = pd.read_pickle('data/betacoronavirus_p4.pickle')
         datadict = {}
         datadict['taxa'] = datadict_raw['taxa']
         datadict['genome'] = np.array(datadict_raw['genome'])[:, 10000:10100, :]
@@ -81,47 +71,22 @@ if __name__ == "__main__":
         #     print(datadict['genome'][0,i,:])
 
     if primate_data:
-        Alphabet_dir_blank = {'A': [1, 0, 0, 0, 0],
-                              'C': [0, 1, 0, 0, 0],
-                              'G': [0, 0, 1, 0, 0],
-                              'T': [0, 0, 0, 1, 0],
-                              '-': [0, 0, 0, 0, 1]}
-
         datadict_raw = pd.read_pickle('data/primate.p')
-        # max_site = 898
-        # datadict = {}
-        # datadict['taxa'] = datadict_raw.keys()
-        # datadict['genome'] = np.array(datadict_raw.values())
         genome_strings = list(datadict_raw.values())
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
 
-    if real_data_1:
-        genome_strings = \
-            ['aaccctgttatttccacatgccaacaatcccaacag',
-             'aactctgttatttccacatgccaacaatcccaacag',
-             'aaatctgtgttgtctaaatgtcagttatttcagtta',
-             'aaagctattatttaaaaatataaattatctcaatta',
-             'aacactgttatttctaaatatcacttttcccaattg']
-        datadict = form_dataset_from_strings(genome_strings, alphabet_dir)
-        datadict['taxa'] = ['human', 'gibbon', 'guinea pig', 'aardvark', 'armadillo']
 
-    if real_data_2:
-        # Primates
-        # block 19, 20, 32, 38, 42, 45, 47, 52, 53, 54, 57, 74, 78, 89, 92, 202, 223, 228, 239, 286, 304, 309, 346
-        genome_strings = \
-            [
-                'taatggaataacacctttgctatgttatccaaacaatattagtcctttttcttctcttgtcgcccagccagagggcaatggtgggatctcggctcactgagacctctgcctcccagttcaagttacaggcacccgccaggctggtctcgaactgctgacctcaggtgatccacccaccttggcctccgaaagtgccgggattataggcgtgagccaccgcaccacctagcttgtatcgaacaaagggaataaaaaatgtatggatcaaggctcatgtacacaagatccaaattatccaccatccaggataatattttttgg',
-                'gaatggaataacacctttgctatgttatccaaacaatattagtcctttttcttctcttgtcgcccagccagagggcaatggtgggatctccgctcactgagacctctgcctcccagttcaagttacaggcacccgccaggctggtctcgaactgctgacctcaggtgaaccacccaccttggcctccgaaagtgccgggattataggcgtgagccaccgcaccacctagcttgtatcgaacaaagggaataaaaaatgtatggatcaaggctcatgtacacaagatccaaattatccaccatccaggataatattttttgg',
-                'taatggaataacacctttgctatgttatccaaacaatattagtccttttttttctcttgtcacccagccagagggcaatggcgggatctcggctcactgagacctctgcctcccagttcaagctacaggcacccgccaggctggtcttgaactgctgacctcaggtgatccacccaccttggcctccaaaagtgccgggattataggtgtgagccaccgcaccacctagcttgtatcgaactaagggaataaaaaatgtatggatcaaggctcatgtacacaagatccaaattatccaccatccaggataatatttttcgg',
-                'taatggaataacacctttgctatgttatccaaacaatattagtcctattttttctcttgtcacccagccagagggcaatggtgggatctcggctcactgcgacctctgcctcccagttcaagctacaggcacccgccaggctgggctccaactgctgacctcaggtgatccacccatcttggcctccgaaagtgccgggattacaggcgtgagccaccgcactgcctagtttgtatcgaacaaagggaatataaaatgtatgattcaaggctcatgtacacaagatccaaattatcccccatccaggatagtattttacgg',
-                'taatggaataacacctttgctatgttattcaaacaatattagtcctattttttctcttgttgcccagctggagggcaatggcgggatctcggctcgctgccacctctgcctcccagttcaggctacaggcacctgccatgctgttcctgaactgctgacctcaggtgatccacctaccttggcctccaaaagtgccgggattacaggcgtgagccaccgcactgcctagtttgtattgaacaaagggaatataaaatgtatgaatcaaggctcatgtacacaagatccaaattatccaccatccaggataatattttatgg',
-                'taacagaataacacctttactatgttatctaaataatatttgtcctattttttctcttgtcacccagctggaaagcaatggcgggacctcagctcactgcaacctctgcctcccagttcaagctataggcatctgccaggctggtctcgaactgctgacctcaggtgatccacccgccttggcctcccaaagcgctgggattgtaggcatgagccaccccgccacctagtttgtatagaatataggagatacaaaatgtatgaatcaaggctgacgtatacacgatccaaattatcccccacccaggacaatattttctga',
-                'taacagaataacacctttgctatgttatctaaataatatttgtcctattttttctcttgtcacccagctggaaagcaatggcgggacctcagctcactgcaacctctgcctcccagttcaagctacaggcatctgccaggctggtctcgaactgctgacctcaggtgatccacccgccttggcctcccaaagcgctgggattgtaggcatgagccaccccgccacctagtttgtatagaatataggagatacaaaatgtatgaatcaaggctgacgtatacacgatccaaattatcccccacccaggacaatattttctga',
-                'taacagaataacacttttgctatgttatctaaataatatttgtcctatttcttctcttgtcgcccagctggaaggcaatggcgggacctcagctcactgcaacctctgcctcccagttcaagctacaggcatctgccaggctggtctagaactgctgacctcaggtgatccacccgccttggcctcccaaagtgctggaattgcaggcatgagccaccccgccacctagtttgtatagaatataggagatacaaaatgtatgaatcaaggctgacgtccacacgatccaaattatcccccacccaggacaatattttctga',
-                'taacagaataacacctttgctatgttatctaaataatatttgtcctattttttctcttgtcgcccagctggtgggcaatggcggaatctcggctcaatgcaacctctgcctcccagttcaagctacaggcatctgtcaggctggtctcaaactgctgacctcaggtgatccacccgccttggcctcccaaagtgctgggattacaggcacgacccaccccgccacctagtttgtatagaatagaggagatacaaaatgtatgaatccaggctgacgtacacacgatccaaattatcccccacccaggacaatattttctga']
-        datadict = form_dataset_from_strings(genome_strings, alphabet_dir)
-        datadict['taxa'] = ['human', 'chimp', 'gorilla', 'oranguta', 'gibbon', 'rhesus', 'macaque', 'baboon',
-                            'greenmonkey']
+    if simulate_data:
+        data_NxSxA = simulateDNA(3, 5, alphabet)
+        # print("Simulated genomes:\n", data_NxSxA)
+        taxa = ['S' + str(i) for i in range(data_NxSxA.shape[0])]
+        datadict = {'taxa': taxa,
+                    'genome': data_NxSxA}
+
+
+    if load_strings:
+        genome_strings = ['ACTTTGAGAG', 'ACTTTGACAG', 'ACTTTGACTG', 'ACTTTGACTC']
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
 
     #pdb.set_trace()
