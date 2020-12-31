@@ -416,7 +416,9 @@ class VCSMC:
 
         data = np.array([self.genome_NxSxA] * K, dtype=np.double) # KxNxSxA
         slices = self.batch_slices(data, batch_size)
+        print('================= Dataset shape: KxNxSxA =================')
         print(data.shape)
+        print('==========================================================')
 
         self.sample_phylogenies()
         print('===================\nFinished constructing computational graph!', '\n===================')
