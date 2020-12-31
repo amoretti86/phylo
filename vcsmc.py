@@ -152,7 +152,7 @@ class VCSMC:
         r_multiplier = tf.expand_dims(tf.log(self.left_branches_param), axis=0)
         left_branches_logprior = tf.reduce_sum(l_multiplier - l_exponent, axis=1)
         right_branches_logprior = tf.reduce_sum(r_multiplier - r_exponent, axis=1)
-        log_likelihood_R = tf.gather(log_likelihood, self.N-1) + \
+        log_likelihood_R = tf.gather(log_likelihood, self.N-2) + \
           log_double_factorial(2 * self.N - 3) - \
           left_branches_logprior - right_branches_logprior
         return log_likelihood_R          
@@ -300,8 +300,8 @@ class VCSMC:
         right_branches = tf.concat([right_branches, [q_r_branch_samples]], axis=0) 
 
         # Update partial set data
-        new_data = tf.constant(np.zeros((1, 1, self.S, self.A))) # to be used in tf.while_loop
-        new_record = tf.constant(np.zeros((1, 1)), dtype=tf.int32) # to be used in tf.while_loop
+        new_data = tf.expand_dims(tf.expand_dims(tf.squeeze(tf.gather_nd(core, [[0, 0]])),axis=0),axis=0) # initially trivial, to be used in tf.while_loop
+        new_record = tf.constant(np.zeros((1, 1)), dtype=tf.int32) # initially trivial, to be used in tf.while_loop
         remaining_indices_k = tf.gather(remaining_indices, 0)
         core_remaining_indices = tf.gather(tf.gather(core, 0), remaining_indices_k)
         new_core = tf.expand_dims(core_remaining_indices, axis=0)
@@ -311,9 +311,9 @@ class VCSMC:
                                                        self.cond_update_data, self.body_update_data,
                                                        loop_vars=[new_data, new_record, core, new_core, leafnode_record, new_leafnode_record, 
                                                                   q_l_branch_samples, q_r_branch_samples, coalesced_indices, remaining_indices, r, tf.constant(0)],
-                                                       shape_invariants=[tf.TensorShape([None, 1, self.S, self.A]),
+                                                       shape_invariants=[new_data.get_shape(),
                                                                          tf.TensorShape([None, 1]), core.get_shape(),
-                                                                         tf.TensorShape([None, None, self.S, self.A]),
+                                                                         tf.TensorShape([None, None, None, self.A]),
                                                                          leafnode_record.get_shape(), tf.TensorShape([None, None]),
                                                                          q_l_branch_samples.get_shape(), q_r_branch_samples.get_shape(), 
                                                                          coalesced_indices.get_shape(), remaining_indices.get_shape(),
@@ -353,11 +353,10 @@ class VCSMC:
         Main sampling routine that performs combinatorial SMC by calling the rank update subroutine
         """
         N = self.N
-        S = self.S
         A = self.A
         K = self.K
 
-        self.core = tf.placeholder(dtype=tf.float64, shape=(K, N, S, A))
+        self.core = tf.placeholder(dtype=tf.float64, shape=(K, N, None, A))
         leafnode_record = tf.constant(1, shape=(K, N), dtype=tf.int32) # Keeps track of self.core
 
         left_branches = tf.constant(0, shape=(1, K), dtype=tf.float64)
@@ -378,7 +377,7 @@ class VCSMC:
             loop_vars=[log_weights, log_likelihood, log_likelihood_tilde, self.jump_chains, self.jump_chain_tensor, 
             self.core, leafnode_record, left_branches, right_branches, v, tf.constant(0)],
             shape_invariants=[tf.TensorShape([None, K]), tf.TensorShape([None, K]), log_likelihood_tilde.get_shape(),
-                              tf.TensorShape([K, None]), tf.TensorShape([K, None]), tf.TensorShape([K, None, S, A]),
+                              tf.TensorShape([K, None]), tf.TensorShape([K, None]), tf.TensorShape([K, None, None, A]),
                               tf.TensorShape([K, None]), tf.TensorShape([None, K]), tf.TensorShape([None, K]), 
                               v.get_shape(), tf.TensorShape([])])
 
@@ -387,14 +386,22 @@ class VCSMC:
         self.left_branches = tf.gather(left_branches, list(range(1, N))) # remove the trivial index 0
         self.right_branches = tf.gather(right_branches, list(range(1, N))) # remove the trivial index 0
         self.elbo = self.compute_log_ZSMC(log_weights)
-        self.log_likelihood_R = self.get_log_likelihood(log_likelihood)
+        self.log_likelihood_R = self.get_log_likelihood(self.log_likelihood)
         self.cost = - self.elbo
         self.log_likelihood_tilde = log_likelihood_tilde
         self.v = v
 
         return self.elbo
 
-    def train(self, numIters=800, memory_optimization='on'):
+    def batch_slices(self, data, batch_size):
+        sites = data.shape[2]
+        slices = []
+        for i in range(0, sites-1, batch_size):
+            slices.append(i)
+        slices.append(sites)
+        return slices
+
+    def train(self, epochs=100, batch_size=128, memory_optimization='on'):
         """
         Run the train op in a TensorFlow session and evaluate variables
         """
@@ -407,18 +414,21 @@ class VCSMC:
             off = rewriter_config_pb2.RewriterConfig.OFF
             config.graph_options.rewrite_options.memory_optimization = off
 
+        data = np.array([self.genome_NxSxA] * K, dtype=np.double) # KxNxSxA
+        slices = self.batch_slices(data, batch_size)
+        print(data.shape)
+
         self.sample_phylogenies()
         print('===================\nFinished constructing computational graph!', '\n===================')
 
         self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
-        feed_data = np.array([self.genome_NxSxA] * K, dtype=np.double)
-        print(feed_data.shape)
 
         sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
-        print('===================\nInitial evaluation of ELBO:', round(sess.run(-self.cost, feed_dict={self.core: feed_data}), 3), '\n===================')
+        print('===================\nInitial evaluation of ELBO:', round(sess.run(-self.cost, feed_dict={self.core: data}), 3), '\n===================')
         print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
+        
         print('Training begins --')
         elbos = []
         Qmatrices = []
@@ -429,41 +439,48 @@ class VCSMC:
         ll = []
         ll_tilde = []
         ll_R = []
-        #best_cost = -inf
-        for i in range(numIters):
+
+        for i in range(epochs):
             bt = datetime.now()
-            _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: feed_data, self.learning_rate: self.lr})
-            elbos.append(-cost)
+            
+            for j in range(len(slices)-1):
+                data_batch = data[:,:,slices[j]:slices[j+1],:]
+                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: data_batch, self.learning_rate: self.lr})
+                print('Minibatch', j)
+
+            output = sess.run([self.cost,
+                               self.stationary_probs,
+                               self.Qmatrix,
+                               self.left_branches,
+                               self.right_branches,
+                               self.log_weights,
+                               self.log_likelihood,
+                               self.log_likelihood_tilde,
+                               self.log_likelihood_R,
+                               self.v],
+                               feed_dict={self.core: data})
+            cost = output[0]
+            stats = output[1]
+            Qs = output[2]
+            lb = output[3]
+            rb = output[4]
+            log_Ws = output[5]
+            log_liks = output[6]
+            log_lik_tilde = output[7]
+            log_lik_R = output[8]
+            overcount = output[9]
             print('Epoch', i+1)
             print('ELBO\n', round(-cost, 3))
-            output = sess.run([self.stationary_probs,
-                self.Qmatrix,
-                self.left_branches,
-                self.right_branches,
-                self.log_weights,
-                self.log_likelihood,
-                self.log_likelihood_tilde,
-                self.log_likelihood_R,
-                self.v],
-                feed_dict={self.core: feed_data})
-            stats = output[0]
-            Qs = output[1]
-            lb = output[2]
-            rb = output[3]
-            log_Ws = output[4]
-            log_liks = output[5]
-            log_lik_tilde = output[6]
-            log_lik_R = output[7]
-            overcount = output[8]
             print('Stationary probabilities\n', stats)
             print('Q-matrix\n', Qs)
-            print('Left branches\n', lb)
-            print('Right branches\n', rb)
-            print('Log Weights\n', np.round(log_Ws,3))
-            print('Log likelihood\n', np.round(log_liks,3))
-            print('Log likelihood tilde\n', np.round(log_lik_tilde,3))
+            # print('Left branches\n', lb)
+            # print('Right branches\n', rb)
+            # print('Log Weights\n', np.round(log_Ws,3))
+            # print('Log likelihood\n', np.round(log_liks,3))
+            # print('Log likelihood tilde\n', np.round(log_lik_tilde,3))
             print('Log likelihood at R\n', np.round(log_lik_R,3))
-            print('Overcounting\n', overcount)
+            # print('Overcounting\n', overcount)
+            elbos.append(-cost)
             Qmatrices.append(Qs)
             left_branches.append(lb)
             right_branches.append(rb)
@@ -472,7 +489,7 @@ class VCSMC:
             ll_R.append(log_lik_R)
             log_weights.append(log_Ws)
             #pdb.set_trace()
-            jc = sess.run(self.jump_chains, feed_dict={self.core: feed_data})
+            jc = sess.run(self.jump_chains, feed_dict={self.core: data})
             jump_chain_evolution.append(jc)
             at = datetime.now()
             print('Time spent\n', at-bt, '\n-----------------------------------------')
