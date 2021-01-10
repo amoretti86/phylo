@@ -28,11 +28,16 @@ if __name__ == "__main__":
                     'c': [0, 1, 0, 0],
                     'g': [0, 0, 1, 0],
                     't': [0, 0, 0, 1]}
-    Alphabet_dir_blank = {'A': [1, 0, 0, 0, 0],
-                          'C': [0, 1, 0, 0, 0],
-                          'G': [0, 0, 1, 0, 0],
-                          'T': [0, 0, 0, 1, 0],
-                          '-': [0, 0, 0, 0, 1]}
+    Alphabet_dir_blank_old = {'A': [1, 0, 0, 0, 0],
+                              'C': [0, 1, 0, 0, 0],
+                              'G': [0, 0, 1, 0, 0],
+                              'T': [0, 0, 0, 1, 0],
+                              '-': [0, 0, 0, 0, 1]}
+    Alphabet_dir_blank = {'A': [1, 0, 0, 0],
+                          'C': [0, 1, 0, 0],
+                          'G': [0, 0, 1, 0],
+                          'T': [0, 0, 0, 1],
+                          '-': [1, 1, 1, 1]}
     alphabet = np.array([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]])
 
 
@@ -43,8 +48,8 @@ if __name__ == "__main__":
         return genomes_NxSxA
 
 
-    def form_dataset_from_strings(genome_strings, alphabet_dir):
-        genomes_NxSxA = np.zeros([len(genome_strings), len(genome_strings[0]), len(alphabet_dir)])
+    def form_dataset_from_strings(genome_strings, alphabet_dir, alphabet_num=4):
+        genomes_NxSxA = np.zeros([len(genome_strings), len(genome_strings[0]), alphabet_num])
         for i in range(genomes_NxSxA.shape[0]):
             for j in range(genomes_NxSxA.shape[1]):
                 genomes_NxSxA[i, j] = alphabet_dir[genome_strings[i][j]]
@@ -57,7 +62,7 @@ if __name__ == "__main__":
         datadict_raw = pd.read_pickle('data/hohna_datasets/DS1.pickle')
         genome_strings = list(datadict_raw.values())
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
-        print(datadict['genome'].shape)
+        # print(datadict['genome'].shape)
 
 
     if corona_data:
@@ -90,6 +95,6 @@ if __name__ == "__main__":
 
 
     #pdb.set_trace()
-    vcsmc = vcsmc.VCSMC(datadict,K=16)
+    vcsmc = vcsmc.VCSMC(datadict,K=128)
 
     vcsmc.train(epochs=100, batch_size=128, memory_optimization=args.memory_optimization)
