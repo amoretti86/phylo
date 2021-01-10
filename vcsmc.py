@@ -13,6 +13,7 @@ import pdb
 from datetime import datetime
 import os
 import pickle
+import time
 
 # @staticmethod
 def ncr(n, r):
@@ -446,9 +447,11 @@ class VCSMC:
             bt = datetime.now()
             
             for j in range(len(slices)-1):
+                batch_st = time.time()
                 data_batch = data[:,:,slices[j]:slices[j+1],:]
                 _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: data_batch, self.learning_rate: self.lr})
-                print('Minibatch', j)
+                batch_et =  time.time()
+                print('Minibatch', j, " took ", batch_et - batch_st, " seconds.")
 
             output = sess.run([self.cost,
                                self.stationary_probs,
