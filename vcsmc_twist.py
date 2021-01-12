@@ -231,7 +231,7 @@ class VCSMC:
           - For each topology m (M in total):
             - gather from core using lookahead_indices[m,:]
             - build a temporary new core
-            - compute log-likelihood of this new 'forest'
+            - compute log-likelihood of this new 'forest' <- actually we do a shortcut by computing only the new and removed elements
             - save it into potentials
         """
         num_topo = tf.cast(ncr(self.N, 2), tf.int32)
