@@ -14,6 +14,7 @@ from datetime import datetime
 import os
 import pickle
 import time
+import tqdm
 
 # @staticmethod
 def ncr(n, r):
@@ -443,10 +444,10 @@ class VCSMC:
         ll_tilde = []
         ll_R = []
 
-        for i in range(epochs):
+        for i in tqdm(range(epochs)):
             bt = datetime.now()
             
-            for j in range(len(slices)-1):
+            for j in tqdm(range(len(slices)-1)):
                 batch_st = time.time()
                 data_batch = data[:,:,slices[j]:slices[j+1],:]
                 _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: data_batch, self.learning_rate: self.lr})
