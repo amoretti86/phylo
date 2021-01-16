@@ -7,13 +7,11 @@ import pandas as pd
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description='Variational Combinatorial Sequential Monte Carlo'
+                        description='Variational Combinatorial Sequential Monte Carlo'
     )
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--dataset',
-        help='benchmark dataset to use.',
-        default='load_strings')
+    parser.add_argument('--dataset',
+                        help='benchmark dataset to use.',
+                        default='load_strings')
     parser.add_argument('--memory_optimization',
                         help='Use memory optimization?',
                         default='on')
