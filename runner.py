@@ -5,6 +5,40 @@ import pandas as pd
 
 # export KMP_DUPLICATE_LIB_OK=TRUE
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Variational Combinatorial Sequential Monte Carlo'
+    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--dataset',
+        help='benchmark dataset to use.',
+        default='load_strings')
+    parser.add_argument('--memory_optimization',
+                        help='Use memory optimization?',
+                        default='on')
+    parser.add_argument('--n_particles',
+                        type=int,
+                        help='number of SMC samples.',
+                        default=128)
+    parser.add_argument('--batch_size',
+                        type=int,
+                        help='number of sites on genome per batch.',
+                        default=256)
+    parser.add_argument('--learning_rate',
+                        type=float,
+                        help='Learning rate.',
+                        default=0.01)
+    parser.add_argument(
+        '--num_epoch',
+        type=int,
+        help='number of epoches to train.',
+        default=100
+    )
+    args = parser.parse_args()
+    return args
+
+
 if __name__ == "__main__":
 
     primate_data = False
@@ -13,11 +47,9 @@ if __name__ == "__main__":
     load_strings = False
     simulate_data = False
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', default='load_strings')
-    parser.add_argument('--memory_optimization', default='on')
-    args = parser.parse_args()
 
+    args = parse_args()
+    
     exec(args.dataset + ' = True')
 
     Alphabet_dir = {'A': [1, 0, 0, 0],
@@ -97,4 +129,4 @@ if __name__ == "__main__":
     #pdb.set_trace()
     vcsmc = vcsmc.VCSMC(datadict,K=128)
 
-    vcsmc.train(epochs=100, batch_size=128, memory_optimization=args.memory_optimization)
+    vcsmc.train(epochs=args.num_epoch, batch_size=args.batch_size, learning_rate=args.learning_rate, memory_optimization=args.memory_optimization)
