@@ -13,7 +13,7 @@ import pdb
 from datetime import datetime
 import os
 import pickle
-import tqdm
+from tqdm import tqdm
 
 # @staticmethod
 def ncr(n, r):
@@ -505,12 +505,12 @@ class VCSMC:
         slices.append(sites)
         return slices
 
-    def train(self, epochs=100, batch_size=128, memory_optimization='on'):
+    def train(self, epochs=100, batch_size=128, learning_rate=0.001, memory_optimization='on'):
         """
         Run the train op in a TensorFlow session and evaluate variables
         """
         K = self.K
-        self.lr = 0.001
+        self.lr = learning_rate
 
         config = tf.ConfigProto()
         if memory_optimization == 'off':
