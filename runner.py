@@ -125,6 +125,6 @@ if __name__ == "__main__":
 
 
     #pdb.set_trace()
-    vcsmc = vcsmc.VCSMC(datadict,K=128)
+    vcsmc = vcsmc.VCSMC(datadict,K=args.n_particles)
 
     vcsmc.train(epochs=args.num_epoch, batch_size=args.batch_size, learning_rate=args.learning_rate, memory_optimization=args.memory_optimization)
