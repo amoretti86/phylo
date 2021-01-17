@@ -35,7 +35,7 @@ class VCSMC:
      genome_NxSxA: a 3 tensor of genomes for the n taxa one hot encoded
     """
 
-    def __init__(self, datadict, K):
+    def __init__(self, datadict, K, args=None):
         self.taxa = datadict['taxa']
         self.genome_NxSxA = datadict['genome']
         self.K = K
@@ -225,14 +225,14 @@ class VCSMC:
     def cond_enumerate_over_K(self, potentials, core, leafnode_record, num_topo, r, k):
         return k < self.K
 
-    def cond_true_compute_potentials(self, r, core, leafnode_record, potentials):
+    def compute_potentials(self, r, core, leafnode_record, potentials):
         """
         Build a KxM array of probabilities called potentials, which will eventually become Categorical dist params
         - For each k:
           - For each topology m (M in total):
             - gather from core using lookahead_indices[m,:]
             - build a temporary new core
-            - compute log-likelihood of this new 'forest' <- actually we do a shortcut by computing only the new and removed elements
+            - compute log-likelihood of this new 'forest'
             - save it into potentials
         """
         num_topo = tf.cast(ncr(self.N, 2), tf.int32)
@@ -245,10 +245,6 @@ class VCSMC:
             shape_invariants=[tf.TensorShape([None, None]), core.get_shape(), leafnode_record.get_shape(),
             tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])])
         potentials = tf.gather(potentials, tf.range(1, self.K + 1))
-
-        return potentials
-
-    def cond_false_compute_potentials(self, r, core, leafnode_record, potentials):
 
         return potentials
 
@@ -375,9 +371,7 @@ class VCSMC:
             lambda: self.cond_false_resample(log_likelihood_tilde, core, leafnode_record, log_weights, log_likelihood, jump_chains, jump_chain_tensor, r))
 
         # Twist the proposal
-        potentials = tf.cond(r < self.N-1, 
-            lambda: self.cond_true_compute_potentials(r, core, leafnode_record, potentials),
-            lambda: self.cond_false_compute_potentials(r, core, leafnode_record, potentials))
+        potentials = self.compute_potentials(r, core, leafnode_record, potentials)
 
         # Extend partial states
         particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, \
