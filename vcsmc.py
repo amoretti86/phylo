@@ -9,12 +9,14 @@ import numpy as np
 import tensorflow.compat.v1 as tf
 import tensorflow_probability as tfp
 import matplotlib.pyplot as plt
+import random
 import pdb
 from datetime import datetime
 import os
 import pickle
 import time
 from tqdm import tqdm
+
 
 # @staticmethod
 def ncr(n, r):
@@ -36,7 +38,8 @@ class VCSMC:
      genome_NxSxA: a 3 tensor of genomes for the n taxa one hot encoded
     """
 
-    def __init__(self, datadict, K):
+    def __init__(self, datadict, K, args=None):
+        self.args = args
         self.taxa = datadict['taxa']
         self.genome_NxSxA = datadict['genome']
         self.K = K
@@ -49,7 +52,6 @@ class VCSMC:
         self.right_branches_param = tf.Variable(np.zeros(self.N-1)+10, dtype=tf.float64, name='right_branches_param')
         self.stationary_probs = self.get_stationary_probs()
         self.Qmatrix = self.get_Q()
-        self.learning_rate = tf.placeholder(dtype=tf.float64, shape=[])
 
     def get_stationary_probs(self):
         """ Compute stationary probabilities of the Q matrix """
@@ -61,6 +63,7 @@ class VCSMC:
         Forms the transition matrix of the continuous time Markov Chain, constraints
         are satisfied by defining off-diagonal terms using the softmax function
         """
+        #with tf.device('/gpu:1'): 
         denom = tf.reduce_sum(tf.linalg.set_diag(tf.exp(self.y_q), [0]*self.A), axis=1)
         denom = tf.stack([denom]*self.A, axis=1)
         q_entry = tf.multiply(tf.linalg.set_diag(tf.exp(self.y_q), [0]*self.A), 1/denom)
@@ -112,12 +115,13 @@ class VCSMC:
         Computes conditional complete likelihood at an ancestor node
         by passing messages from left and right children
         """
-        left_Pmatrix = tf.linalg.expm(self.Qmatrix * l_branch)
-        right_Pmatrix = tf.linalg.expm(self.Qmatrix * r_branch)
-        left_prob = tf.matmul(l_data, left_Pmatrix)
-        right_prob = tf.matmul(r_data, right_Pmatrix)
-        likelihood = tf.multiply(left_prob, right_prob)
-        return likelihood
+        with tf.device('/gpu:0'): 
+            left_Pmatrix = tf.linalg.expm(self.Qmatrix * l_branch)
+            right_Pmatrix = tf.linalg.expm(self.Qmatrix * r_branch)
+            left_prob = tf.matmul(l_data, left_Pmatrix)
+            right_prob = tf.matmul(r_data, right_Pmatrix)
+            likelihood = tf.multiply(left_prob, right_prob)
+            return likelihood
 
     def compute_tree_likelihood(self, data, leafnode_num):
         """
@@ -125,11 +129,12 @@ class VCSMC:
         And add that to log-prior of tree topology
         NOTE: we add log-prior of branch-lengths in body_update_weights
         """
-        tree_likelihood = tf.matmul(self.stationary_probs, data, transpose_b=True)
-        data_loglik = tf.reduce_sum(tf.log(tree_likelihood))
-        tree_logprior = -log_double_factorial(2 * tf.maximum(leafnode_num, 2) - 3)
+        with tf.device('/gpu:1'): 
+            tree_likelihood = tf.matmul(self.stationary_probs, data, transpose_b=True)
+            data_loglik = tf.reduce_sum(tf.log(tree_likelihood))
+            tree_logprior = -log_double_factorial(2 * tf.maximum(leafnode_num, 2) - 3)
 
-        return data_loglik + tree_logprior
+            return data_loglik + tree_logprior
 
     def overcounting_correct(self, v, indices, i):
         """
@@ -164,8 +169,9 @@ class VCSMC:
         Forms the estimator log_ZSMC, a multi sample lower bound to the likelihood
         Z_SMC is formed by averaging over weights and multiplying over coalescent events
         """
-        log_Z_SMC = tf.reduce_sum(tf.reduce_logsumexp(log_weights - tf.log(tf.cast(self.K, tf.float64)), axis=1))
-        return log_Z_SMC
+        with tf.device('/gpu:1'): 
+            log_Z_SMC = tf.reduce_sum(tf.reduce_logsumexp(log_weights - tf.log(tf.cast(self.K, tf.float64)), axis=1))
+            return log_Z_SMC
 
     def body_update_data(self, new_data, new_record, core, new_core, leafnode_record, new_leafnode_record, 
         q_l_branch_samples, q_r_branch_samples, coalesced_indices, remaining_indices, r, k):
@@ -174,29 +180,30 @@ class VCSMC:
         coalesced indices and branch lengths are also indexed in order to compute the conditional likelihood
         and pass messages from children to parent node.
         """
-        n1 = tf.gather_nd(coalesced_indices, [k, 0])
-        n2 = tf.gather_nd(coalesced_indices, [k, 1])
-        l_data = tf.squeeze(tf.gather_nd(core, [[k, n1]]))
-        r_data = tf.squeeze(tf.gather_nd(core, [[k, n2]]))
-        l_branch = tf.gather(q_l_branch_samples, k)
-        r_branch = tf.gather(q_r_branch_samples, k)
-        mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
-        mtx_ext = tf.expand_dims(tf.expand_dims(mtx, axis=0), axis=0)  # 1x1xSxA
-        new_data = tf.concat([new_data, mtx_ext], axis=0)  # kx1xSxA
+        with tf.device('/gpu:1'): 
+            n1 = tf.gather_nd(coalesced_indices, [k, 0])
+            n2 = tf.gather_nd(coalesced_indices, [k, 1])
+            l_data = tf.squeeze(tf.gather_nd(core, [[k, n1]]))
+            r_data = tf.squeeze(tf.gather_nd(core, [[k, n2]]))
+            l_branch = tf.gather(q_l_branch_samples, k)
+            r_branch = tf.gather(q_r_branch_samples, k)
+            mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
+            mtx_ext = tf.expand_dims(tf.expand_dims(mtx, axis=0), axis=0)  # 1x1xSxA
+            new_data = tf.concat([new_data, mtx_ext], axis=0)  # kx1xSxA
 
-        leafnode_num = tf.squeeze(tf.gather_nd(leafnode_record, [[k, n1]])) + \
-                       tf.squeeze(tf.gather_nd(leafnode_record, [[k, n2]]))
-        new_record = tf.concat([new_record, [[leafnode_num]]], axis=0)
+            leafnode_num = tf.squeeze(tf.gather_nd(leafnode_record, [[k, n1]])) + \
+                           tf.squeeze(tf.gather_nd(leafnode_record, [[k, n2]]))
+            new_record = tf.concat([new_record, [[leafnode_num]]], axis=0)
 
-        remaining_indices_k = tf.gather(remaining_indices, k)
-        core_remaining_indices = tf.gather(tf.gather(core, k), remaining_indices_k)
-        new_core = tf.concat([new_core, [core_remaining_indices]], axis=0)
-        record_remaining_indices = tf.gather(tf.gather(leafnode_record, k), remaining_indices_k)
-        new_leafnode_record = tf.concat([new_leafnode_record, [record_remaining_indices]], axis=0)
+            remaining_indices_k = tf.gather(remaining_indices, k)
+            core_remaining_indices = tf.gather(tf.gather(core, k), remaining_indices_k)
+            new_core = tf.concat([new_core, [core_remaining_indices]], axis=0)
+            record_remaining_indices = tf.gather(tf.gather(leafnode_record, k), remaining_indices_k)
+            new_leafnode_record = tf.concat([new_leafnode_record, [record_remaining_indices]], axis=0)
 
-        k = k + 1
-        return new_data, new_record, core, new_core, leafnode_record, new_leafnode_record, \
-        q_l_branch_samples, q_r_branch_samples, coalesced_indices, remaining_indices, r, k
+            k = k + 1
+            return new_data, new_record, core, new_core, leafnode_record, new_leafnode_record, \
+            q_l_branch_samples, q_r_branch_samples, coalesced_indices, remaining_indices, r, k
 
     def cond_update_data(self, new_data, new_record, core, new_core, leafnode_record, new_leafnode_record, 
         q_l_branch_samples, q_r_branch_samples, coalesced_indices, remaining_indices, r, k):
@@ -276,7 +283,7 @@ class VCSMC:
     def cond_false_resample(self, log_likelihood_tilde, core, leafnode_record, log_weights, log_likelihood, jump_chains, jump_chain_tensor, r):
         return log_likelihood_tilde, core, leafnode_record, jump_chains, jump_chain_tensor
 
-    def rank_update_body_main(self, log_weights, log_likelihood, log_likelihood_tilde, jump_chains, jump_chain_tensor, 
+    def body_rank_update(self, log_weights, log_likelihood, log_likelihood_tilde, jump_chains, jump_chain_tensor, 
         core, leafnode_record, left_branches, right_branches, v, r):
         """
         Define tensors for log_weights, log_likelihood, jump_chain_tensor and core (state data for distribution over characters for ancestral taxa)
@@ -292,14 +299,15 @@ class VCSMC:
         q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor, r)
 
         # Branch lengths
-        left_branches_param_r = tf.gather(self.left_branches_param, r)
-        right_branches_param_r = tf.gather(self.right_branches_param, r)
-        q_l_branch_dist = tfp.distributions.Exponential(rate=left_branches_param_r)
-        q_r_branch_dist = tfp.distributions.Exponential(rate=right_branches_param_r)
-        q_l_branch_samples = q_l_branch_dist.sample(self.K) 
-        q_r_branch_samples = q_r_branch_dist.sample(self.K) 
-        left_branches = tf.concat([left_branches, [q_l_branch_samples]], axis=0) 
-        right_branches = tf.concat([right_branches, [q_r_branch_samples]], axis=0) 
+        with tf.device('/gpu:1'): 
+            left_branches_param_r = tf.gather(self.left_branches_param, r)
+            right_branches_param_r = tf.gather(self.right_branches_param, r)
+            q_l_branch_dist = tfp.distributions.Exponential(rate=left_branches_param_r)
+            q_r_branch_dist = tfp.distributions.Exponential(rate=right_branches_param_r)
+            q_l_branch_samples = q_l_branch_dist.sample(self.K) 
+            q_r_branch_samples = q_r_branch_dist.sample(self.K) 
+            left_branches = tf.concat([left_branches, [q_l_branch_samples]], axis=0) 
+            right_branches = tf.concat([right_branches, [q_r_branch_samples]], axis=0) 
 
         # Update partial set data
         new_data = tf.expand_dims(tf.expand_dims(tf.squeeze(tf.gather_nd(core, [[0, 0]])),axis=0),axis=0) # initially trivial, to be used in tf.while_loop
@@ -346,7 +354,7 @@ class VCSMC:
         return log_weights, log_likelihood, log_likelihood_tilde, jump_chains, jump_chain_tensor, \
         core, leafnode_record, left_branches, right_branches, v, r
 
-    def rank_update_cond_main(self, log_weights, log_likelihood, log_likelihood_tilde, jump_chains, jump_chain_tensor, 
+    def cond_rank_update(self, log_weights, log_likelihood, log_likelihood_tilde, jump_chains, jump_chain_tensor, 
         core, leafnode_record, left_branches, right_branches, v, r):
         return r < self.N - 1
 
@@ -372,16 +380,17 @@ class VCSMC:
         self.jump_chain_tensor = tf.constant([self.taxa] * K, name='JumpChainK')
         v = tf.constant(1, shape=(K, ), dtype=tf.float64)  # to be used in overcounting_correct
 
-        # MAIN LOOP
+        # ---- MAIN LOOP --------------+
         log_weights, log_likelihood, log_likelihood_tilde, self.jump_chains, self.jump_chain_tensor, \
         core_final, record_final, left_branches, right_branches, v, r = \
-            tf.while_loop(self.rank_update_cond_main, self.rank_update_body_main,
+            tf.while_loop(self.cond_rank_update, self.body_rank_update,
             loop_vars=[log_weights, log_likelihood, log_likelihood_tilde, self.jump_chains, self.jump_chain_tensor, 
             self.core, leafnode_record, left_branches, right_branches, v, tf.constant(0)],
             shape_invariants=[tf.TensorShape([None, K]), tf.TensorShape([None, K]), log_likelihood_tilde.get_shape(),
                               tf.TensorShape([K, None]), tf.TensorShape([K, None]), tf.TensorShape([K, None, None, A]),
                               tf.TensorShape([K, None]), tf.TensorShape([None, K]), tf.TensorShape([None, K]), 
                               v.get_shape(), tf.TensorShape([])])
+        # -----------------------------+
 
         self.log_weights = tf.gather(log_weights, list(range(1, N))) # remove the trivial index 0
         self.log_likelihood = tf.gather(log_likelihood, list(range(1, N))) # remove the trivial index 0
@@ -397,10 +406,15 @@ class VCSMC:
 
     def batch_slices(self, data, batch_size):
         sites = data.shape[2]
+        sites_list = list(range(sites))
+        num_batches = sites // batch_size
         slices = []
-        for i in range(0, sites-1, batch_size):
-            slices.append(i)
-        slices.append(sites)
+        for i in range(num_batches):
+            sampled_indices = random.sample(sites_list, batch_size)
+            slices.append(sampled_indices)
+            sites_list = list(set(sites_list) - set(sampled_indices))
+        if len(sites_list) != 0:
+            slices.append(sites_list)
         return slices
 
     def train(self, epochs=100, batch_size=128, learning_rate=0.01, memory_optimization='on'):
@@ -425,13 +439,27 @@ class VCSMC:
         self.sample_phylogenies()
         print('===================\nFinished constructing computational graph!', '\n===================')
 
-        self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+        self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.lr).minimize(self.cost)
 
         sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
-        print('===================\nInitial evaluation of ELBO:', round(sess.run(-self.cost, feed_dict={self.core: data}), 3), '\n===================')
+        initial_eval = round(sess.run(-self.cost, feed_dict={self.core: data}), 3)
+        print('===================\nInitial evaluation of ELBO:', initial_eval, '\n===================')
         print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
+        
+        # Create local directory and save experiment results
+        tm = str(datetime.now())
+        local_rlt_root = './results/'
+        save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
+        if not os.path.exists(save_dir): os.makedirs(save_dir)
+        rp = open(save_dir + "run_parameters.txt", "w")
+        rp.write('Initial evaluation of ELBO : ' + str(initial_eval))
+        rp.write('\n')
+        for k,v in vars(self.args).items():
+            rp.write(str(k) + ' : ' + str(v))
+            rp.write('\n')
+        rp.close()
         
         print('Training begins --')
         elbos = []
@@ -443,16 +471,17 @@ class VCSMC:
         ll = []
         ll_tilde = []
         ll_R = []
+        
 
         for i in tqdm(range(epochs)):
             bt = datetime.now()
             
-            for j in tqdm(range(len(slices)-1)):
+            for j in tqdm(range(len(slices))):
                 batch_st = time.time()
-                data_batch = data[:,:,slices[j]:slices[j+1],:]
-                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: data_batch, self.learning_rate: self.lr})
+                data_batch = np.take(data, slices[j], axis=2)
+                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: data_batch})
                 batch_et =  time.time()
-                print('Minibatch', j, " took ", batch_et - batch_st, " seconds.")
+                #print('Minibatch', j, " took ", batch_et - batch_st, " seconds.")
 
             output = sess.run([self.cost,
                                self.stationary_probs,
@@ -500,12 +529,6 @@ class VCSMC:
             at = datetime.now()
             print('Time spent\n', at-bt, '\n-----------------------------------------')
         print("Done training.")
-
-        # Create local directory and save experiment results
-        tm = str(datetime.now())
-        local_rlt_root = './results/'
-        save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
-        if not os.path.exists(save_dir): os.makedirs(save_dir)
 
         plt.imshow(sess.run(self.Qmatrix))
         plt.title("Trained Q matrix")
