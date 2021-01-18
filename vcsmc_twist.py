@@ -10,6 +10,7 @@ import tensorflow.compat.v1 as tf
 import tensorflow_probability as tfp
 import matplotlib.pyplot as plt
 import pdb
+import random
 from datetime import datetime
 import os
 import pickle
@@ -48,7 +49,6 @@ class VCSMC:
         self.right_branches_param = tf.Variable(np.zeros(self.N-1)+10, dtype=tf.float64, name='right_branches_param')
         self.stationary_probs = self.get_stationary_probs()
         self.Qmatrix = self.get_Q()
-        self.learning_rate = tf.placeholder(dtype=tf.float64, shape=[])
 
     def get_stationary_probs(self):
         """ Compute stationary probabilities of the Q matrix """
@@ -139,6 +139,15 @@ class VCSMC:
         resampled_record = tf.gather(leafnode_record, indices)
         resampled_JC_K = tf.gather(JC_K, indices)
         return resampled_core, resampled_record, resampled_JC_K, indices
+    
+    
+    def twisted_extend_partial_state(self, JCK, potentials, r):
+        
+        indices = tf.random.categorical([tf.squeeze(potentials)],2)
+        JC_keep = tf.gather(tf.reshape(JCK, [self.]))
+        
+        
+        return particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, q, JCK
 
     def extend_partial_state(self, JCK, r):
         """
@@ -225,7 +234,7 @@ class VCSMC:
     def cond_enumerate_over_K(self, potentials, core, leafnode_record, num_topo, r, k):
         return k < self.K
 
-    def compute_potentials(self, r, core, leafnode_record, potentials):
+    def cond_true_compute_potentials(self, r, core, leafnode_record, potentials):
         """
         Build a KxM array of probabilities called potentials, which will eventually become Categorical dist params
         - For each k:
@@ -245,6 +254,10 @@ class VCSMC:
             shape_invariants=[tf.TensorShape([None, None]), core.get_shape(), leafnode_record.get_shape(),
             tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])])
         potentials = tf.gather(potentials, tf.range(1, self.K + 1))
+
+        return potentials
+
+    def cond_false_compute_potentials(self, r, core, leafnode_record, potentials):
 
         return potentials
 
@@ -371,8 +384,11 @@ class VCSMC:
             lambda: self.cond_false_resample(log_likelihood_tilde, core, leafnode_record, log_weights, log_likelihood, jump_chains, jump_chain_tensor, r))
 
         # Twist the proposal
-        potentials = self.compute_potentials(r, core, leafnode_record, potentials)
+        potentials = tf.cond(r < self.N-1, 
+            lambda: self.cond_true_compute_potentials(r, core, leafnode_record, potentials),
+            lambda: self.cond_false_compute_potentials(r, core, leafnode_record, potentials))
 
+        pdb.set_trace()
         # Extend partial states
         particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, \
         q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor, r)
@@ -493,10 +509,15 @@ class VCSMC:
 
     def batch_slices(self, data, batch_size):
         sites = data.shape[2]
+        sites_list = list(range(sites))
+        num_batches = sites // batch_size
         slices = []
-        for i in range(0, sites-1, batch_size):
-            slices.append(i)
-        slices.append(sites)
+        for i in range(num_batches):
+            sampled_indices = random.sample(sites_list, batch_size)
+            slices.append(sampled_indices)
+            sites_list = list(set(sites_list) - set(sampled_indices))
+        if len(sites_list) != 0:
+            slices.append(sites_list)
         return slices
 
     def train(self, epochs=100, batch_size=128, learning_rate=0.001, memory_optimization='on'):
@@ -521,7 +542,7 @@ class VCSMC:
         self.sample_phylogenies()
         print('===================\nFinished constructing computational graph!', '\n===================')
 
-        self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.learning_rate).minimize(self.cost)
+        self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.lr).minimize(self.cost)
 
         sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
@@ -544,8 +565,8 @@ class VCSMC:
             bt = datetime.now()
             
             for j in tqdm(range(len(slices)-1)):
-                data_batch = data[:,:,slices[j]:slices[j+1],:]
-                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: data_batch, self.learning_rate: self.lr})
+                data_batch = np.take(data, slices[j], axis=2)
+                _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: data_batch})
                 print('Minibatch', j)
                 print(sess.run([self.cost, self.potentials], feed_dict={self.core: data_batch}))
 
