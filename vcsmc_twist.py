@@ -141,29 +141,13 @@ class VCSMC:
         return resampled_core, resampled_record, resampled_JC_K, indices
     
     
-    def twisted_extend_partial_state(self, JCK, potentials, r):
+    def extend_partial_state(self, JCK, potentials, map_to_indices, r):
         
-        indices = tf.random.categorical([tf.squeeze(potentials)],2)
-        JC_keep = tf.gather(tf.reshape(JCK, [self.]))
-        
-        
-        return particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, q, JCK
-
-    def extend_partial_state(self, JCK, r):
-        """
-        Extends partial state by sampling two states to coalesce (Gumbel-max trick to sample without replacement)
-        JumpChain (JC_K) is a tensor formed from a numpy array of lists of strings, returns a new JumpChain tensor
-        """
-        # Compute combinatorial term
-        # pdb.set_trace()
-        q = 1 / ncr(self.N - r, 2)
-        data = tf.reshape(tf.range((self.N - r) * self.K), (self.K, self.N - r))
-        data = tf.mod(data, (self.N - r))
-        data = tf.cast(data, dtype=tf.float32)
-        # Gumbel-max trick to sample without replacement
-        z = -tf.math.log(-tf.math.log(tf.random.uniform(tf.shape(data), 0, 1)))
-        top_values, coalesced_indices = tf.nn.top_k(data + z, 2)
-        bottom_values, remaining_indices = tf.nn.top_k(tf.negative(data + z), self.N - r - 2)
+        indices = tf.random.categorical(potentials, 1)
+        coalesced_indices = tf.cast(tf.gather_nd(map_to_indices, indices), tf.int32)
+        transformed_coalesced_indices = tf.cast(self.N*10*tf.reduce_sum(tf.one_hot(coalesced_indices, self.N-r), axis=1), tf.int32)
+        all_indices = tf.tile(tf.expand_dims(tf.range(self.N-r), axis=0), [self.K,1])
+        remaining_indices, _ = tf.nn.top_k(all_indices - transformed_coalesced_indices, self.N - r - 2)
         JC_keep = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), remaining_indices)
         particles = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), coalesced_indices)
         particle1 = particles[:, 0]
@@ -172,25 +156,52 @@ class VCSMC:
         particle_coalesced = particle1 + '+' + particle2
         # Form new Jump Chain
         JCK = tf.concat([JC_keep, tf.expand_dims(particle_coalesced, axis=1)], axis=1)
+        q = 1 / ncr(self.N - r, 2)
 
         return particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, q, JCK
 
-    def body1_enumerate_over_topo(self, potentials_k, core, leafnode_record, k, r, r1):
-        potentials_k, core_, leafnode_record_, k_, r_, r1, r2 = tf.while_loop(
+    # def extend_partial_state_old(self, JCK, potentials, map_to_indices, r):
+    #     """
+    #     Extends partial state by sampling two states to coalesce (Gumbel-max trick to sample without replacement)
+    #     JumpChain (JC_K) is a tensor formed from a numpy array of lists of strings, returns a new JumpChain tensor
+    #     """
+    #     # Compute combinatorial term
+    #     # pdb.set_trace()
+    #     q = 1 / ncr(self.N - r, 2)
+    #     data = tf.reshape(tf.range((self.N - r) * self.K), (self.K, self.N - r))
+    #     data = tf.mod(data, (self.N - r))
+    #     data = tf.cast(data, dtype=tf.float32)
+    #     # Gumbel-max trick to sample without replacement
+    #     z = -tf.math.log(-tf.math.log(tf.random.uniform(tf.shape(data), 0, 1))) # z ~ Gumbel(0)
+    #     top_values, coalesced_indices = tf.nn.top_k(data + z, 2)
+    #     bottom_values, remaining_indices = tf.nn.top_k(tf.negative(data + z), self.N - r - 2)
+    #     JC_keep = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), remaining_indices)
+    #     particles = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), coalesced_indices)
+    #     particle1 = particles[:, 0]
+    #     particle2 = particles[:, 1]
+    #     # Form new state
+    #     particle_coalesced = particle1 + '+' + particle2
+    #     # Form new Jump Chain
+    #     JCK = tf.concat([JC_keep, tf.expand_dims(particle_coalesced, axis=1)], axis=1)
+
+    #     return particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, q, JCK
+
+    def body1_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_record, k, r, r1):
+        potentials_k, map_to_indices, core_, leafnode_record_, k_, r_, r1, r2 = tf.while_loop(
             self.cond2_enumerate_over_topo,
             self.body2_enumerate_over_topo,
-            loop_vars = [potentials_k, core, leafnode_record, k, r, r1, r1+1],
-            shape_invariants = [tf.TensorShape([None]), core.get_shape(), leafnode_record.get_shape(),
+            loop_vars = [potentials_k, map_to_indices, core, leafnode_record, k, r, r1, r1+1],
+            shape_invariants = [tf.TensorShape([None]), tf.TensorShape([None, 2]), core.get_shape(), leafnode_record.get_shape(),
             tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])])
 
         r1 = r1 + 1
 
-        return potentials_k, core, leafnode_record, k, r, r1
+        return potentials_k, map_to_indices, core, leafnode_record, k, r, r1
     
-    def cond1_enumerate_over_topo(self, potentials_k, core, leafnode_record, k, r, r1):
+    def cond1_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_record, k, r, r1):
         return r1 < self.N - r - 1
     
-    def body2_enumerate_over_topo(self, potentials_k, core, leafnode_record, k, r, r1, r2):
+    def body2_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_record, k, r, r1, r2):
 
         # Branch-lengths are temporarily 0.1
         l_data = tf.squeeze(tf.gather_nd(core, [[k, r1]]))
@@ -207,31 +218,33 @@ class VCSMC:
         joint_prob -= self.compute_tree_likelihood(r_data, r_leafnode_num)
 
         potentials_k = tf.concat([potentials_k, [joint_prob]], axis=0)
+        map_to_indices = tf.concat([map_to_indices, [[r1, r2]]], axis=0)
 
         r2 = r2 + 1
 
-        return potentials_k, core, leafnode_record, k, r, r1, r2
+        return potentials_k, map_to_indices, core, leafnode_record, k, r, r1, r2
     
-    def cond2_enumerate_over_topo(self, potentials_k, core, leafnode_record, k, r, r1, r2):
+    def cond2_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_record, k, r, r1, r2):
         return r2 < self.N - r
 
-    def body_enumerate_over_K(self, potentials, core, leafnode_record, num_topo, r, k):
+    def body_enumerate_over_K(self, potentials, map_to_indices, core, leafnode_record, num_topo, r, k):
         potentials_k = tf.constant(0, shape=(1,), dtype=tf.float64)
-        potentials_k, core_, leafnode_record_, k_, r_, r__ = tf.while_loop(
+        potentials_k, map_to_indices, core_, leafnode_record_, k_, r_, r__ = tf.while_loop(
             self.cond1_enumerate_over_topo, 
             self.body1_enumerate_over_topo,
-            loop_vars = [potentials_k, core, leafnode_record, k, r, 0],
-            shape_invariants = [tf.TensorShape([None]), core.get_shape(), leafnode_record.get_shape(),
+            loop_vars = [potentials_k, map_to_indices, core, leafnode_record, k, r, 0],
+            shape_invariants = [tf.TensorShape([None]), tf.TensorShape([None, 2]), core.get_shape(), leafnode_record.get_shape(),
             tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])]
             )
         potentials_k = tf.gather(potentials_k, tf.range(1, num_topo+1))
+        map_to_indices = tf.gather(map_to_indices, tf.range(1, num_topo+1))
         potentials = tf.concat([potentials, [potentials_k]], axis=0)
 
         k = k + 1
 
-        return potentials, core, leafnode_record, num_topo, r, k
+        return potentials, map_to_indices, core, leafnode_record, num_topo, r, k
 
-    def cond_enumerate_over_K(self, potentials, core, leafnode_record, num_topo, r, k):
+    def cond_enumerate_over_K(self, potentials, map_to_indices, core, leafnode_record, num_topo, r, k):
         return k < self.K
 
     def cond_true_compute_potentials(self, r, core, leafnode_record, potentials):
@@ -244,22 +257,24 @@ class VCSMC:
             - compute log-likelihood of this new 'forest'
             - save it into potentials
         """
-        num_topo = tf.cast(ncr(self.N, 2), tf.int32)
+        num_topo = tf.cast(ncr(self.N-r, 2), tf.int32)
         potentials_ = tf.constant(0, shape=(self.N**2,), dtype=tf.float64)
         potentials = tf.expand_dims(tf.gather(potentials_, tf.range(0, num_topo)),axis=0)
-        potentials, core_, leafnode_record_, n_, r, k = tf.while_loop(
+        map_to_indices = tf.constant(0, shape=(1,2), dtype=tf.float64)
+        potentials, map_to_indices, core_, leafnode_record_, n_, r, k = tf.while_loop(
             self.cond_enumerate_over_K, 
             self.body_enumerate_over_K, 
-            loop_vars=[potentials, core, leafnode_record, num_topo, r, 0], 
-            shape_invariants=[tf.TensorShape([None, None]), core.get_shape(), leafnode_record.get_shape(),
+            loop_vars=[potentials, map_to_indices, core, leafnode_record, num_topo, r, 0], 
+            shape_invariants=[tf.TensorShape([None, None]), tf.TensorShape([None, 2]), core.get_shape(), leafnode_record.get_shape(),
             tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])])
         potentials = tf.gather(potentials, tf.range(1, self.K + 1))
 
-        return potentials
+        return potentials, map_to_indices
 
     def cond_false_compute_potentials(self, r, core, leafnode_record, potentials):
-
-        return potentials
+        potentials = tf.math.log(tf.constant(1, shape=(self.K, 1), dtype=tf.float64))
+        map_to_indices = tf.cast(tf.tile([[0,1]], [self.K,1]), tf.float64)
+        return potentials, map_to_indices
 
     def body_update_data(self, new_data, new_record, core, new_core, leafnode_record, new_leafnode_record, 
         q_l_branch_samples, q_r_branch_samples, coalesced_indices, remaining_indices, r, k):
@@ -384,14 +399,13 @@ class VCSMC:
             lambda: self.cond_false_resample(log_likelihood_tilde, core, leafnode_record, log_weights, log_likelihood, jump_chains, jump_chain_tensor, r))
 
         # Twist the proposal
-        potentials = tf.cond(r < self.N-1, 
+        potentials, map_to_indices = tf.cond(r < self.N-1, 
             lambda: self.cond_true_compute_potentials(r, core, leafnode_record, potentials),
-            lambda: self.cond_false_compute_potentials(r, core, leafnode_record, potentials))
+            lambda: self.cond_false_compute_potentials(r, core, leafnode_record, potentials)) # cond_false is currently not needed
 
-        pdb.set_trace()
         # Extend partial states
         particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, \
-        q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor, r)
+        q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor, potentials, map_to_indices, r)
 
         # Branch lengths
         left_branches_param_r = tf.gather(self.left_branches_param, r)
