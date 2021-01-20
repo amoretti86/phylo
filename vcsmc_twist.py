@@ -37,6 +37,7 @@ class VCSMC:
     """
 
     def __init__(self, datadict, K, args=None):
+        self.args = args
         self.taxa = datadict['taxa']
         self.genome_NxSxA = datadict['genome']
         self.K = K
@@ -556,13 +557,30 @@ class VCSMC:
         self.sample_phylogenies()
         print('===================\nFinished constructing computational graph!', '\n===================')
 
-        self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.lr).minimize(self.cost)
+        if self.args.optimizer == 'Adam':
+            self.optimizer = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.cost)
+        else:
+            self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.lr).minimize(self.cost)
 
         sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
         print('===================\nInitial evaluation of ELBO:', round(sess.run(-self.cost, feed_dict={self.core: data}), 3), '\n===================')
         print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
+        
+        # Create local directory and save experiment results
+        tm = str(datetime.now())
+        local_rlt_root = './results/'
+        save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
+        if not os.path.exists(save_dir): os.makedirs(save_dir)
+        rp = open(save_dir + "run_parameters.txt", "w")
+        rp.write('Initial evaluation of ELBO : ' + str(initial_eval))
+        rp.write('\n')
+        for k,v in vars(self.args).items():
+            rp.write(str(k) + ' : ' + str(v))
+            rp.write('\n')
+        rp.write(str(self.optimizer))
+        rp.close()
         
         print('Training begins --')
         elbos = []
@@ -631,11 +649,11 @@ class VCSMC:
             print('Time spent\n', at-bt, '\n-----------------------------------------')
         print("Done training.")
 
-        # Create local directory and save experiment results
-        tm = str(datetime.now())
-        local_rlt_root = './results/'
-        save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
-        if not os.path.exists(save_dir): os.makedirs(save_dir)
+        # Moved to save flags before training is finished
+        # tm = str(datetime.now())
+        # local_rlt_root = './results/'
+        # save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
+        # if not os.path.exists(save_dir): os.makedirs(save_dir)
 
         plt.imshow(sess.run(self.Qmatrix))
         plt.title("Trained Q matrix")
