@@ -565,7 +565,8 @@ class VCSMC:
         sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
-        print('===================\nInitial evaluation of ELBO:', round(sess.run(-self.cost, feed_dict={self.core: data}), 3), '\n===================')
+        initial_eval = round(sess.run(-self.cost, feed_dict={self.core: data}), 3)
+        print('===================\nInitial evaluation of ELBO:', initial_eval, '\n===================')
         print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
         
         # Create local directory and save experiment results
