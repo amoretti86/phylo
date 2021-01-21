@@ -83,6 +83,23 @@ class VCSMC:
             right_prob = tf.matmul(r_data, right_Pmatrix)
             likelihood = tf.multiply(left_prob, right_prob)
             return likelihood
+        
+    def broadcast_conditional_likelihood(self, l_data_SxA, r_data_SxA, l_branch_samples_M, r_branch_samples_M):
+        """
+        Broadcast conditional complete likelihood computation at ancestor node
+        by passing messages from left and right children.
+        Messages passed and Pmatrices are now 3-tensors to broadcast across subparticle x alphabet x alphabet (MxAxA)
+        """
+        left_message_MxAxA   = tf.tensordot( l_branch_samples_M, self.Qmatrix, axes = 0)
+        right_message_MxAxA  = tf.tensordot( r_branch_samples_M, self.Qmatrix, axes = 0)
+        left_Pmat_MxAxA      = tf.linalg.expm(left_message_MxAxA)
+        right_Pmat_MxAxA     = tf.linalg.expm(right_message_MxAxA)
+        left_prob_MxAxS   = tf.matmul(left_Pmat_MxAxA, l_data_SxA, transpose_b = True)  # Confirm dim(l_data): SxA
+        right_prob_MxAxS  = tf.matmul(right_Pmat_MxAxA, r_data_SxA, transpose_b = True)
+        left_prob_AxSxM = tf.transpose(left_prob_MxAxS, perm=[1,2,0])
+        right_prob_AxSxM = tf.transpose(right_prob_MxAxS, perm=[1,2,0])
+        likelihood_AxSxM = left_prob_AxSxM * right_prob_AxSxM
+        return likelihood_AxSxM
 
     def compute_tree_likelihood(self, data, leafnode_num):
         """
@@ -93,6 +110,20 @@ class VCSMC:
         with tf.device('/gpu:1'): 
             tree_likelihood = tf.matmul(self.stationary_probs, data, transpose_b=True)
             data_loglik = tf.reduce_sum(tf.log(tree_likelihood))
+            tree_logprior = -log_double_factorial(2 * tf.maximum(leafnode_num, 2) - 3)
+
+            return data_loglik + tree_logprior
+        
+    def broadcast_compute_tree_likelihood(self, likelihood_AxSxM, leafnode_num):
+        """
+        Forms a log probability measure by dotting the stationary probs with tree likelihood
+        And add that to log-prior of tree topology
+        NOTE: we add log-prior of branch-lengths in body_update_weights
+        """
+        with tf.device('/gpu:1'): 
+            tree_likelihood_SxM = tf.einsum('ia,asm->sm',self.stationary_probs, likelihood_AxSxM)
+            tree_likelihood_S = tf.reduce_mean(tree_likelihood_SxM, axis=1)
+            data_loglik = tf.reduce_sum(tf.log(tree_likelihood_S))
             tree_logprior = -log_double_factorial(2 * tf.maximum(leafnode_num, 2) - 3)
 
             return data_loglik + tree_logprior
@@ -214,22 +245,23 @@ class VCSMC:
     def body2_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_record, k, r, r1, r2):
 
         # Branch-lengths are temporarily 0.1
-        l_data = tf.squeeze(tf.gather_nd(core, [[k, r1]]))
+        l_data = tf.squeeze(tf.gather_nd(core, [[k, r1]])) # confirm dim(l_data): SxA
         r_data = tf.squeeze(tf.gather_nd(core, [[k, r2]]))
         l_branch_p = tf.Variable(self.args.pb_c, name='l_branch_topo_param', dtype=tf.float64)
         r_branch_p = tf.Variable(self.args.pb_c, name='r_branch_topo_param', dtype=tf.float64)
         l_branch_dist  = tfp.distributions.Exponential(rate=l_branch_p)
         r_branch_dist  = tfp.distributions.Exponential(rate=r_branch_p)
-        l_branch_samples_m = l_branch_dist.sample(self.M) 
-        r_branch_samples_m = r_branch_dist.sample(self.M) 
-        l_branch = tf.reduce_mean(l_branch_samples_m,axis=0)
-        r_branch = tf.reduce_mean(r_branch_samples_m,axis=0)
-        mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
+        l_branch_samples_M = l_branch_dist.sample(self.M) 
+        r_branch_samples_M = r_branch_dist.sample(self.M) 
+        #mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
+        #pdb.set_trace()
+        mtx_AxSxM = self.broadcast_conditional_likelihood(l_data, r_data, l_branch_samples_M, r_branch_samples_M)
         l_leafnode_num = tf.squeeze(tf.gather_nd(leafnode_record, [[k, r1]]))
         r_leafnode_num = tf.squeeze(tf.gather_nd(leafnode_record, [[k, r2]]))
         leafnode_num = l_leafnode_num + r_leafnode_num
 
-        joint_prob = self.compute_tree_likelihood(mtx, leafnode_num)
+        #joint_prob = self.compute_tree_likelihood(mtx, leafnode_num)
+        joint_prob = self.broadcast_compute_tree_likelihood(mtx_AxSxM, leafnode_num)
         joint_prob -= self.compute_tree_likelihood(l_data, l_leafnode_num)
         joint_prob -= self.compute_tree_likelihood(r_data, r_leafnode_num)
 
