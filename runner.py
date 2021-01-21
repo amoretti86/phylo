@@ -1,4 +1,8 @@
-import vcsmc as vcsmc
+import logging
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
+logging.getLogger('tensorflow').setLevel(logging.FATAL)
+import vcsmc_twist as vcsmc
 import numpy as np
 import argparse
 import pandas as pd
@@ -7,8 +11,7 @@ import pandas as pd
 
 def parse_args():
     parser = argparse.ArgumentParser(
-                        description='Variational Combinatorial Sequential Monte Carlo'
-    )
+                        description='Variational Combinatorial Sequential Monte Carlo')
     parser.add_argument('--dataset',
                         help='benchmark dataset to use.',
                         default='load_strings')
@@ -27,12 +30,26 @@ def parse_args():
                         type=float,
                         help='Learning rate.',
                         default=0.01)
-    parser.add_argument(
-        '--num_epoch',
-        type=int,
-        help='number of epoches to train.',
-        default=100
-    )
+    parser.add_argument('--num_epoch',
+                        type=int,
+                        help='number of epoches to train.',
+                        default=100)
+    parser.add_argument('--branch_prior',
+                       type=float,
+                       help='Hyperparameter for branch length initialization.',
+                       default=10.)
+    parser.add_argument('--optimizer',
+                       type=str,
+                       help='Optimizer for Training',
+                       default='GradientDescentOptimizer')
+    parser.add_argument('--pb_c',
+                       type=float,
+                       help='Twisting Potential Branch Prior',
+                       default=.1)
+    parser.add_argument('--M',
+                       type=float,
+                       help='number of subparticles to compute twisting potentials',
+                       default=10)
     args = parser.parse_args()
     return args
 
@@ -45,9 +62,8 @@ if __name__ == "__main__":
     load_strings = False
     simulate_data = False
 
-
     args = parse_args()
-    
+
     exec(args.dataset + ' = True')
 
     Alphabet_dir = {'A': [1, 0, 0, 0],
@@ -124,7 +140,8 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
 
+
     #pdb.set_trace()
-    vcsmc = vcsmc.VCSMC(datadict,K=args.n_particles)
+    vcsmc = vcsmc.VCSMC(datadict, K=args.n_particles, args=args)
 
     vcsmc.train(epochs=args.num_epoch, batch_size=args.batch_size, learning_rate=args.learning_rate, memory_optimization=args.memory_optimization)
