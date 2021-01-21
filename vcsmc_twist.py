@@ -4,7 +4,10 @@ An implementation of the Variational Combinatorial Sequential Monte Carlo for Ba
   to simultaneously learn the parameters of the proposal and target distribution
   and perform Bayesian phylogenetic inference.
 """
-
+import logging
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
+logging.getLogger('tensorflow').setLevel(logging.FATAL)
 import numpy as np
 import tensorflow.compat.v1 as tf
 import tensorflow_probability as tfp
@@ -12,7 +15,6 @@ import matplotlib.pyplot as plt
 import pdb
 import random
 from datetime import datetime
-import os
 import pickle
 from tqdm import tqdm
 
@@ -41,13 +43,14 @@ class VCSMC:
         self.taxa = datadict['taxa']
         self.genome_NxSxA = datadict['genome']
         self.K = K
+        self.M = args.M
         self.N = len(self.genome_NxSxA)
         self.S = len(self.genome_NxSxA[0])
         self.A = len(self.genome_NxSxA[0, 0])
         self.y_q = tf.linalg.set_diag(tf.Variable(np.zeros((self.A, self.A)) + 1/self.A, dtype=tf.float64, name='Qmatrix'), [0]*self.A)
         self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
-        self.left_branches_param = tf.Variable(np.zeros(self.N-1)+10, dtype=tf.float64, name='left_branches_param')
-        self.right_branches_param = tf.Variable(np.zeros(self.N-1)+10, dtype=tf.float64, name='right_branches_param')
+        self.left_branches_param = tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_branches_param')
+        self.right_branches_param = tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='right_branches_param')
         self.stationary_probs = self.get_stationary_probs()
         self.Qmatrix = self.get_Q()
 
@@ -73,12 +76,13 @@ class VCSMC:
         Computes conditional complete likelihood at an ancestor node
         by passing messages from left and right children
         """
-        left_Pmatrix = tf.linalg.expm(self.Qmatrix * l_branch)
-        right_Pmatrix = tf.linalg.expm(self.Qmatrix * r_branch)
-        left_prob = tf.matmul(l_data, left_Pmatrix)
-        right_prob = tf.matmul(r_data, right_Pmatrix)
-        likelihood = tf.multiply(left_prob, right_prob)
-        return likelihood
+        with tf.device('/gpu:0'): 
+            left_Pmatrix = tf.linalg.expm(self.Qmatrix * l_branch)
+            right_Pmatrix = tf.linalg.expm(self.Qmatrix * r_branch)
+            left_prob = tf.matmul(l_data, left_Pmatrix)
+            right_prob = tf.matmul(r_data, right_Pmatrix)
+            likelihood = tf.multiply(left_prob, right_prob)
+            return likelihood
 
     def compute_tree_likelihood(self, data, leafnode_num):
         """
@@ -86,11 +90,12 @@ class VCSMC:
         And add that to log-prior of tree topology
         NOTE: we add log-prior of branch-lengths in body_update_weights
         """
-        tree_likelihood = tf.matmul(self.stationary_probs, data, transpose_b=True)
-        data_loglik = tf.reduce_sum(tf.log(tree_likelihood))
-        tree_logprior = -log_double_factorial(2 * tf.maximum(leafnode_num, 2) - 3)
+        with tf.device('/gpu:1'): 
+            tree_likelihood = tf.matmul(self.stationary_probs, data, transpose_b=True)
+            data_loglik = tf.reduce_sum(tf.log(tree_likelihood))
+            tree_logprior = -log_double_factorial(2 * tf.maximum(leafnode_num, 2) - 3)
 
-        return data_loglik + tree_logprior
+            return data_loglik + tree_logprior
 
     def overcounting_correct(self, v, indices, i):
         """
@@ -125,6 +130,7 @@ class VCSMC:
         Forms the estimator log_ZSMC, a multi sample lower bound to the likelihood
         Z_SMC is formed by averaging over weights and multiplying over coalescent events
         """
+        #with tf.device('/gpu:1'): 
         log_Z_SMC = tf.reduce_sum(tf.reduce_logsumexp(log_weights - tf.log(tf.cast(self.K, tf.float64)), axis=1))
         return log_Z_SMC
 
@@ -161,31 +167,34 @@ class VCSMC:
 
         return particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, q, JCK
 
-    # def extend_partial_state_old(self, JCK, potentials, map_to_indices, r):
-    #     """
-    #     Extends partial state by sampling two states to coalesce (Gumbel-max trick to sample without replacement)
-    #     JumpChain (JC_K) is a tensor formed from a numpy array of lists of strings, returns a new JumpChain tensor
-    #     """
-    #     # Compute combinatorial term
-    #     # pdb.set_trace()
-    #     q = 1 / ncr(self.N - r, 2)
-    #     data = tf.reshape(tf.range((self.N - r) * self.K), (self.K, self.N - r))
-    #     data = tf.mod(data, (self.N - r))
-    #     data = tf.cast(data, dtype=tf.float32)
-    #     # Gumbel-max trick to sample without replacement
-    #     z = -tf.math.log(-tf.math.log(tf.random.uniform(tf.shape(data), 0, 1))) # z ~ Gumbel(0)
-    #     top_values, coalesced_indices = tf.nn.top_k(data + z, 2)
-    #     bottom_values, remaining_indices = tf.nn.top_k(tf.negative(data + z), self.N - r - 2)
-    #     JC_keep = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), remaining_indices)
-    #     particles = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), coalesced_indices)
-    #     particle1 = particles[:, 0]
-    #     particle2 = particles[:, 1]
-    #     # Form new state
-    #     particle_coalesced = particle1 + '+' + particle2
-    #     # Form new Jump Chain
-    #     JCK = tf.concat([JC_keep, tf.expand_dims(particle_coalesced, axis=1)], axis=1)
+    def extend_partial_state_old(self, JCK, potentials, map_to_indices, r):
+        '''
+         """
+         Extends partial state by sampling two states to coalesce (Gumbel-max trick to sample without replacement)
+         JumpChain (JC_K) is a tensor formed from a numpy array of lists of strings, returns a new JumpChain tensor
+         """
+         # Compute combinatorial term
+         # pdb.set_trace()
+         q = 1 / ncr(self.N - r, 2)
+         data = tf.reshape(tf.range((self.N - r) * self.K), (self.K, self.N - r))
+         data = tf.mod(data, (self.N - r))
+         data = tf.cast(data, dtype=tf.float32)
+         # Gumbel-max trick to sample without replacement
+         z = -tf.math.log(-tf.math.log(tf.random.uniform(tf.shape(data), 0, 1))) # z ~ Gumbel(0)
+         top_values, coalesced_indices = tf.nn.top_k(data + z, 2)
+         bottom_values, remaining_indices = tf.nn.top_k(tf.negative(data + z), self.N - r - 2)
+         JC_keep = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), remaining_indices)
+         particles = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), coalesced_indices)
+         particle1 = particles[:, 0]
+         particle2 = particles[:, 1]
+         # Form new state
+         particle_coalesced = particle1 + '+' + particle2
+         # Form new Jump Chain
+         JCK = tf.concat([JC_keep, tf.expand_dims(particle_coalesced, axis=1)], axis=1)
 
-    #     return particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, q, JCK
+         return particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, q, JCK
+         '''
+        return
 
     def body1_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_record, k, r, r1):
         potentials_k, map_to_indices, core_, leafnode_record_, k_, r_, r1, r2 = tf.while_loop(
@@ -207,8 +216,14 @@ class VCSMC:
         # Branch-lengths are temporarily 0.1
         l_data = tf.squeeze(tf.gather_nd(core, [[k, r1]]))
         r_data = tf.squeeze(tf.gather_nd(core, [[k, r2]]))
-        l_branch = 0.1
-        r_branch = 0.1
+        l_branch_p = tf.Variable(self.args.pb_c, name='l_branch_topo_param', dtype=tf.float64)
+        r_branch_p = tf.Variable(self.args.pb_c, name='r_branch_topo_param', dtype=tf.float64)
+        l_branch_dist  = tfp.distributions.Exponential(rate=l_branch_p)
+        r_branch_dist  = tfp.distributions.Exponential(rate=r_branch_p)
+        l_branch_samples_m = l_branch_dist.sample(self.M) 
+        r_branch_samples_m = r_branch_dist.sample(self.M) 
+        l_branch = tf.reduce_mean(l_branch_samples_m,axis=0)
+        r_branch = tf.reduce_mean(r_branch_samples_m,axis=0)
         mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
         l_leafnode_num = tf.squeeze(tf.gather_nd(leafnode_record, [[k, r1]]))
         r_leafnode_num = tf.squeeze(tf.gather_nd(leafnode_record, [[k, r2]]))
@@ -284,6 +299,7 @@ class VCSMC:
         coalesced indices and branch lengths are also indexed in order to compute the conditional likelihood
         and pass messages from children to parent node.
         """
+        #with tf.device('/gpu:1'): 
         n1 = tf.gather_nd(coalesced_indices, [k, 0])
         n2 = tf.gather_nd(coalesced_indices, [k, 1])
         l_data = tf.squeeze(tf.gather_nd(core, [[k, n1]]))
@@ -317,6 +333,7 @@ class VCSMC:
         Computes the natural forest extension, a naive extension of the target measure from
         the set of phylogenies to a measure on the set of partial states
         """
+        #with tf.device('/gpu:1'): 
         data = tf.squeeze(tf.gather_nd(core, [[k, j]]))
         leafnode_num = tf.squeeze(tf.gather_nd(leafnode_record, [[k, j]]))
         log_likelihood_r_k = log_likelihood_r_k + \
@@ -407,6 +424,8 @@ class VCSMC:
         # Extend partial states
         particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, \
         q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor, potentials, map_to_indices, r)
+        #particle1, particle2, particle_coalesced, coalesced_indices, remaining_indices, \
+        #q, jump_chain_tensor = self.extend_partial_state(jump_chain_tensor, potentials, map_to_indices, r)
 
         # Branch lengths
         left_branches_param_r = tf.gather(self.left_branches_param, r)
@@ -594,14 +613,15 @@ class VCSMC:
         ll_tilde = []
         ll_R = []
 
+        #pdb.set_trace()
         for i in tqdm(range(epochs)):
             bt = datetime.now()
             
             for j in tqdm(range(len(slices)-1)):
                 data_batch = np.take(data, slices[j], axis=2)
                 _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: data_batch})
-                print('Minibatch', j)
-                print(sess.run([self.cost, self.potentials], feed_dict={self.core: data_batch}))
+                print('\n Minibatch', j)
+                #print(sess.run([self.cost, self.potentials], feed_dict={self.core: data_batch}))
 
             output = sess.run([self.cost,
                                self.stationary_probs,
@@ -612,7 +632,10 @@ class VCSMC:
                                self.log_likelihood,
                                self.log_likelihood_tilde,
                                self.log_likelihood_R,
-                               self.v],
+                               self.v,
+                               self.left_branches_param,
+                               self.right_branches_param,
+                               self.potentials],
                                feed_dict={self.core: data})
             cost = output[0]
             stats = output[1]
@@ -624,6 +647,9 @@ class VCSMC:
             log_lik_tilde = output[7]
             log_lik_R = output[8]
             overcount = output[9]
+            lb_param = output[10]
+            rb_param = output[11]
+            potentials = output[12]
             print('Epoch', i+1)
             print('ELBO\n', round(-cost, 3))
             print('Stationary probabilities\n', stats)
@@ -633,6 +659,9 @@ class VCSMC:
             # print('Log Weights\n', np.round(log_Ws,3))
             # print('Log likelihood\n', np.round(log_liks,3))
             # print('Log likelihood tilde\n', np.round(log_lik_tilde,3))
+            print('Potentials:\n', potentials[:5])
+            print('LB param:\n', lb_param)
+            print('RB param:\n', rb_param)
             print('Log likelihood at R\n', np.round(log_lik_R,3))
             # print('Overcounting\n', overcount)
             elbos.append(-cost)
@@ -650,11 +679,11 @@ class VCSMC:
             print('Time spent\n', at-bt, '\n-----------------------------------------')
         print("Done training.")
 
-        # Moved to save flags before training is finished
-        # tm = str(datetime.now())
-        # local_rlt_root = './results/'
-        # save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
-        # if not os.path.exists(save_dir): os.makedirs(save_dir)
+        # Create local directory and save experiment results
+        #tm = str(datetime.now())
+        #local_rlt_root = './results/'
+        #save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
+        #if not os.path.exists(save_dir): os.makedirs(save_dir)
 
         plt.imshow(sess.run(self.Qmatrix))
         plt.title("Trained Q matrix")
@@ -707,6 +736,3 @@ class VCSMC:
             pickle.dump(resultDict, f)
 
         print("Finished...")
-        #pdb.set_trace()
-
-        return
