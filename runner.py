@@ -14,7 +14,7 @@ def parse_args():
                         description='Variational Combinatorial Sequential Monte Carlo')
     parser.add_argument('--dataset',
                         help='benchmark dataset to use.',
-                        default='load_strings')
+                        default='primate_data')
     parser.add_argument('--memory_optimization',
                         help='Use memory optimization?',
                         default='on')
@@ -29,25 +29,25 @@ def parse_args():
     parser.add_argument('--learning_rate',
                         type=float,
                         help='Learning rate.',
-                        default=0.01)
+                        default=0.001)
     parser.add_argument('--num_epoch',
                         type=int,
                         help='number of epoches to train.',
                         default=100)
-    parser.add_argument('--branch_prior',
-                       type=float,
-                       help='Hyperparameter for branch length initialization.',
-                       default=10.)
     parser.add_argument('--optimizer',
                        type=str,
                        help='Optimizer for Training',
                        default='GradientDescentOptimizer')
+    parser.add_argument('--branch_prior',
+                       type=float,
+                       help='Hyperparameter for branch length initialization.',
+                       default=np.log(10))
     parser.add_argument('--pb_c',
                        type=float,
                        help='Twisting Potential Branch Prior',
-                       default=.1)
+                       default=np.log(0.1))
     parser.add_argument('--M',
-                       type=float,
+                       type=int,
                        help='number of subparticles to compute twisting potentials',
                        default=10)
     args = parser.parse_args()
