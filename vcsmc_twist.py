@@ -207,6 +207,20 @@ class VCSMC:
 
         return data_loglik + tree_logprior
 
+    def broadcast_compute_tree_posterior_K(self, data_KxSxA, leafnode_num_record):
+        """
+        Forms a log probability measure by dotting the stationary probs with tree likelihood
+        And add that to log-prior of tree topology
+        NOTE: we add log-prior of branch-lengths in body_update_weights
+        """
+        #with tf.device('/gpu:1'): 
+        stationary_probs = tf.tile(tf.expand_dims(tf.transpose(self.stationary_probs), axis=0), [self.K, 1, 1])
+        tree_lik = tf.squeeze(tf.matmul(data_KxSxA, stationary_probs))
+        tree_loglik = tf.reduce_sum(tf.log(tree_lik), axis=1)
+        tree_logprior = tf.reduce_mean(-log_double_factorial(2 * tf.maximum(leafnode_num_record, 2) - 3), axis=1)
+
+        return tree_loglik + tree_logprior
+
     def compute_forest_posterior(self, data_KxXxSxA, leafnode_num_record, r):
         """
         Forms a log probability measure by dotting the stationary probs with tree likelihood
@@ -267,7 +281,6 @@ class VCSMC:
         resampled_JC_K = tf.gather(JC_K, indices)
         return resampled_core, resampled_record, resampled_JC_K, indices
     
-    
     def extend_partial_state(self, JCK, potentials, map_to_indices, r):
         indices = tf.cast(tf.random.categorical(potentials, 1), tf.int32)
         coalesced_indices = tf.cast(tf.gather_nd(map_to_indices, indices), tf.int32)
@@ -289,74 +302,57 @@ class VCSMC:
 
         return coalesced_indices, remaining_indices, q_log_proposal, JCK
 
-    def body1_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_num_record, k, r, r1):
-        potentials_k, map_to_indices, core_, leafnode_num_record_, k_, r_, r1, r2 = tf.while_loop(
+    def body1_enumerate_over_topo(self, potentials, map_to_indices, core, leafnode_num_record, r, r1):
+        potentials, map_to_indices, core_, leafnode_num_record_, r_, r1, r2 = tf.while_loop(
             self.cond2_enumerate_over_topo,
             self.body2_enumerate_over_topo,
-            loop_vars = [potentials_k, map_to_indices, core, leafnode_num_record, k, r, r1, r1+1],
-            shape_invariants = [tf.TensorShape([None]), tf.TensorShape([None, 2]), 
+            loop_vars = [potentials, map_to_indices, core, leafnode_num_record, r, r1, r1+1],
+            shape_invariants = [tf.TensorShape([None, self.K]), tf.TensorShape([None, 2]), 
             core.get_shape(), leafnode_num_record.get_shape(),
-            tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])])
+            tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])])
 
         r1 = r1 + 1
 
-        return potentials_k, map_to_indices, core, leafnode_num_record, k, r, r1
+        return potentials, map_to_indices, core, leafnode_num_record, r, r1
     
-    def cond1_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_num_record, k, r, r1):
+    def cond1_enumerate_over_topo(self, potentials, map_to_indices, core, leafnode_num_record, r, r1):
         return r1 < self.N - r - 1
     
-    def body2_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_num_record, k, r, r1, r2):
-        # Branch-lengths are temporarily 0.1
-        l_data = tf.squeeze(tf.gather_nd(core, [[k, r1]])) # confirm dim(l_data): SxA
-        r_data = tf.squeeze(tf.gather_nd(core, [[k, r2]]))
+    def body2_enumerate_over_topo(self, potentials, map_to_indices, core, leafnode_num_record, r, r1, r2):
+        l_idx = tf.tile([[r1]], [self.K, 1])
+        r_idx = tf.tile([[r2]], [self.K, 1])
+        l_data_KxSxA = tf.squeeze(gather_across_core(core, l_idx, self.N-r, 1))
+        r_data_KxSxA = tf.squeeze(gather_across_core(core, r_idx, self.N-r, 1))
+        l_data_MKxSxA = tf.reshape(tf.tile([l_data_KxSxA], [self.M,1,1,1]), (self.K*self.M, -1, self.A))
+        r_data_MKxSxA = tf.reshape(tf.tile([r_data_KxSxA], [self.M,1,1,1]), (self.K*self.M, -1, self.A))
         l_branch_p = tf.exp(tf.Variable(self.args.pb_c, name='l_branch_topo_param', dtype=tf.float64))
         r_branch_p = tf.exp(tf.Variable(self.args.pb_c, name='r_branch_topo_param', dtype=tf.float64))
         l_branch_dist  = tfp.distributions.Exponential(rate=l_branch_p)
         r_branch_dist  = tfp.distributions.Exponential(rate=r_branch_p)
-        l_branch_samples_M = l_branch_dist.sample(self.M) 
-        r_branch_samples_M = r_branch_dist.sample(self.M) 
-        #mtx = self.conditional_likelihood(l_data, r_data, l_branch, r_branch)
-        #pdb.set_trace()
-        mtx_AxSxM = self.broadcast_conditional_likelihood_M(l_data, r_data, l_branch_samples_M, r_branch_samples_M)
-        l_leafnode_num = tf.squeeze(tf.gather_nd(leafnode_num_record, [[k, r1]]))
-        r_leafnode_num = tf.squeeze(tf.gather_nd(leafnode_num_record, [[k, r2]]))
+        l_branch_samples_MK = l_branch_dist.sample(self.K * self.M) 
+        r_branch_samples_MK = r_branch_dist.sample(self.K * self.M) 
+        
+        mtx_MKxSxA = self.broadcast_conditional_likelihood_K(l_data_MKxSxA, r_data_MKxSxA, l_branch_samples_MK, r_branch_samples_MK)
+        mtx_KxSxA = tf.reduce_mean(tf.reshape(mtx_MKxSxA, (self.M, self.K, -1, self.A)), axis=0)
+        
+        l_leafnode_num = gather_across_2d(leafnode_num_record, l_idx, self.N-r, 1)
+        r_leafnode_num = gather_across_2d(leafnode_num_record, r_idx, self.N-r, 1)
         leafnode_num = l_leafnode_num + r_leafnode_num
 
         #joint_prob = self.compute_tree_posterior(mtx, leafnode_num)
-        joint_prob = self.broadcast_compute_tree_posterior_M(mtx_AxSxM, leafnode_num)
-        joint_prob -= self.compute_tree_posterior(l_data, l_leafnode_num)
-        joint_prob -= self.compute_tree_posterior(r_data, r_leafnode_num)
+        joint_prob = self.broadcast_compute_tree_posterior_K(mtx_KxSxA, leafnode_num)
+        joint_prob -= self.broadcast_compute_tree_posterior_K(l_data_KxSxA, l_leafnode_num)
+        joint_prob -= self.broadcast_compute_tree_posterior_K(r_data_KxSxA, r_leafnode_num)
 
-        potentials_k = tf.concat([potentials_k, [joint_prob]], axis=0)
+        potentials = tf.concat([potentials, [joint_prob]], axis=0)
         map_to_indices = tf.concat([map_to_indices, [[r1, r2]]], axis=0)
 
         r2 = r2 + 1
 
-        return potentials_k, map_to_indices, core, leafnode_num_record, k, r, r1, r2
+        return potentials, map_to_indices, core, leafnode_num_record, r, r1, r2
     
-    def cond2_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_num_record, k, r, r1, r2):
+    def cond2_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_num_record, r, r1, r2):
         return r2 < self.N - r
-
-    def body_enumerate_over_K(self, potentials, map_to_indices, core, leafnode_num_record, num_topo, r, k):
-        potentials_k = tf.constant(0, shape=(1,), dtype=tf.float64)
-        potentials_k, map_to_indices, core_, leafnode_num_record_, k_, r_, r__ = tf.while_loop(
-            self.cond1_enumerate_over_topo, 
-            self.body1_enumerate_over_topo,
-            loop_vars = [potentials_k, map_to_indices, core, leafnode_num_record, k, r, 0],
-            shape_invariants = [tf.TensorShape([None]), tf.TensorShape([None, 2]), 
-            core.get_shape(), leafnode_num_record.get_shape(),
-            tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])]
-            )
-        potentials_k = tf.gather(potentials_k, tf.range(1, num_topo+1))
-        map_to_indices = tf.gather(map_to_indices, tf.range(1, num_topo+1))
-        potentials = tf.concat([potentials, [potentials_k]], axis=0)
-
-        k = k + 1
-
-        return potentials, map_to_indices, core, leafnode_num_record, num_topo, r, k
-
-    def cond_enumerate_over_K(self, potentials, map_to_indices, core, leafnode_num_record, num_topo, r, k):
-        return k < self.K
 
     def compute_potentials(self, r, core, leafnode_num_record):
         """
@@ -369,18 +365,20 @@ class VCSMC:
             - save it into potentials
         """
         num_topo = tf.cast(ncr(self.N-r, 2), tf.int32)
-        potentials_ = tf.constant(0, shape=(self.N**2,), dtype=tf.float64)
-        potentials = tf.expand_dims(tf.gather(potentials_, tf.range(0, num_topo)),axis=0)
+        potentials = tf.constant(0, shape=(1, self.K), dtype=tf.float64)
         map_to_indices = tf.constant(0, shape=(1,2), dtype=tf.float64)
-        potentials, map_to_indices, core_, leafnode_num_record_, n_, r, k = tf.while_loop(
-            self.cond_enumerate_over_K, 
-            self.body_enumerate_over_K, 
-            loop_vars=[potentials, map_to_indices, core, leafnode_num_record, num_topo, r, 0], 
-            shape_invariants=[tf.TensorShape([None, None]), tf.TensorShape([None, 2]), 
+
+        potentials, map_to_indices, core_, leafnode_num_record_, r_, r__ = tf.while_loop(
+            self.cond1_enumerate_over_topo, 
+            self.body1_enumerate_over_topo,
+            loop_vars = [potentials, map_to_indices, core, leafnode_num_record, r, 0],
+            shape_invariants = [tf.TensorShape([None, self.K]), tf.TensorShape([None, 2]), 
             core.get_shape(), leafnode_num_record.get_shape(),
-            tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])])
-        potentials = tf.gather(potentials, tf.range(1, self.K + 1))
+            tf.TensorShape([]), tf.TensorShape([])]
+            )
+        potentials = tf.transpose(tf.gather(potentials, tf.range(1, num_topo+1)))
         potentials = potentials - tf.expand_dims(tf.reduce_logsumexp(potentials, axis=1), axis=1)
+        map_to_indices = tf.gather(map_to_indices, tf.range(1, num_topo+1))
 
         return potentials, map_to_indices
 
@@ -457,8 +455,9 @@ class VCSMC:
         l_branch = tf.gather(left_branches, r+1)
         r_branch = tf.gather(right_branches, r+1)
         
-        log_weights_r = log_likelihood_r - log_likelihood_tilde - (tf.log(left_branches_param_r) - left_branches_param_r * l_branch + \
-            tf.log(right_branches_param_r) - right_branches_param_r * r_branch) + tf.cast(v_minus, tf.float64) - q_log_proposal
+        log_weights_r = log_likelihood_r - log_likelihood_tilde - \
+        (tf.log(left_branches_param_r) - left_branches_param_r * l_branch + tf.log(right_branches_param_r) - \
+        right_branches_param_r * r_branch) + tf.cast(v_minus, tf.float64) - q_log_proposal
 
         log_weights = tf.concat([log_weights, [log_weights_r]], axis=0)
         log_likelihood = tf.concat([log_likelihood, [log_likelihood_r]], axis=0) # pi(t) = pi(Y|t, b, theta) * pi(t, b|theta) / pi(Y)
