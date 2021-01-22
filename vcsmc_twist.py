@@ -118,12 +118,8 @@ class VCSMC:
         self.A = len(self.genome_NxSxA[0, 0])
         self.y_q = tf.linalg.set_diag(tf.Variable(np.zeros((self.A, self.A)) + 1/self.A, dtype=tf.float64, name='Qmatrix'), [0]*self.A)
         self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
-        self.left_branches_param = tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, 
-            constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6),
-            dtype=tf.float64, name='left_branches_param')
-        self.right_branches_param = tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, 
-            constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6),
-            dtype=tf.float64, name='right_branches_param')
+        self.left_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_branches_param'))
+        self.right_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='right_branches_param'))
         self.stationary_probs = self.get_stationary_probs()
         self.Qmatrix = self.get_Q()
 
@@ -313,10 +309,8 @@ class VCSMC:
         # Branch-lengths are temporarily 0.1
         l_data = tf.squeeze(tf.gather_nd(core, [[k, r1]])) # confirm dim(l_data): SxA
         r_data = tf.squeeze(tf.gather_nd(core, [[k, r2]]))
-        l_branch_p = tf.Variable(self.args.pb_c, constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6), 
-            name='l_branch_topo_param', dtype=tf.float64)
-        r_branch_p = tf.Variable(self.args.pb_c, constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6), 
-            name='r_branch_topo_param', dtype=tf.float64)
+        l_branch_p = tf.exp(tf.Variable(self.args.pb_c, name='l_branch_topo_param', dtype=tf.float64))
+        r_branch_p = tf.exp(tf.Variable(self.args.pb_c, name='r_branch_topo_param', dtype=tf.float64))
         l_branch_dist  = tfp.distributions.Exponential(rate=l_branch_p)
         r_branch_dist  = tfp.distributions.Exponential(rate=r_branch_p)
         l_branch_samples_M = l_branch_dist.sample(self.M) 
