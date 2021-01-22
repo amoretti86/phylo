@@ -384,35 +384,6 @@ class VCSMC:
 
         return potentials, map_to_indices
 
-    def body_update_weights(self, log_weights_r, log_likelihood_r, log_likelihood_tilde, coalesced_indices, 
-        core, leafnode_num_record, left_branches, right_branches, left_branches_param_r, right_branches_param_r, v, q, r, k):
-        log_likelihood_r_k = tf.gather(log_likelihood_r, k)
-
-        left_branches_select = tf.gather(tf.gather(tf.transpose(left_branches), k), tf.range(1, r+2))
-        right_branches_select = tf.gather(tf.gather(tf.transpose(right_branches), k), tf.range(1, r+2))
-
-        left_branches_logprior = tf.reduce_sum(
-            -left_branches_param_r * left_branches_select + tf.log(left_branches_param_r))
-        right_branches_logprior = tf.reduce_sum(
-            -right_branches_param_r * right_branches_select + tf.log(right_branches_param_r))
-
-        log_likelihood_r_k = log_likelihood_r_k + left_branches_logprior + right_branches_logprior
-
-        v, log_weights_r = tf.cond(r > 0,
-            lambda: self.cond_true_update_weights(
-                log_weights_r, log_likelihood_r, log_likelihood_tilde, coalesced_indices, 
-                left_branches, right_branches, left_branches_param_r, right_branches_param_r, v, q, r, k),
-            lambda: self.cond_false_update_weights(
-                log_weights_r, log_likelihood_r, log_likelihood_tilde, coalesced_indices, 
-                left_branches, right_branches, left_branches_param_r, right_branches_param_r, v, q, r, k))
-        k = k + 1
-        return log_weights_r, log_likelihood_r, log_likelihood_tilde, coalesced_indices, \
-        core, leafnode_num_record, left_branches, right_branches, left_branches_param_r, right_branches_param_r, v, q, r, k
-
-    def cond_update_weights(self, log_weights_r, log_likelihood_r, log_likelihood_tilde, coalesced_indices, 
-        core, leafnode_num_record, left_branches, left_branches_param_r, right_branches_param_r, right_branches, v, q, r, k):
-        return k < self.K
-
     def cond_true_resample(self, log_likelihood_tilde, core, leafnode_num_record, 
         log_weights, log_likelihood, jump_chains, jump_chain_tensor, r):
         core, leafnode_num_record, jump_chain_tensor, indices = self.resample(
