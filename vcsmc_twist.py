@@ -118,8 +118,12 @@ class VCSMC:
         self.A = len(self.genome_NxSxA[0, 0])
         self.y_q = tf.linalg.set_diag(tf.Variable(np.zeros((self.A, self.A)) + 1/self.A, dtype=tf.float64, name='Qmatrix'), [0]*self.A)
         self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
-        self.left_branches_param = tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_branches_param')
-        self.right_branches_param = tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='right_branches_param')
+        self.left_branches_param = tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, 
+            constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6),
+            dtype=tf.float64, name='left_branches_param')
+        self.right_branches_param = tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, 
+            constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6),
+            dtype=tf.float64, name='right_branches_param')
         self.stationary_probs = self.get_stationary_probs()
         self.Qmatrix = self.get_Q()
 
@@ -309,8 +313,10 @@ class VCSMC:
         # Branch-lengths are temporarily 0.1
         l_data = tf.squeeze(tf.gather_nd(core, [[k, r1]])) # confirm dim(l_data): SxA
         r_data = tf.squeeze(tf.gather_nd(core, [[k, r2]]))
-        l_branch_p = tf.Variable(self.args.pb_c, name='l_branch_topo_param', dtype=tf.float64)
-        r_branch_p = tf.Variable(self.args.pb_c, name='r_branch_topo_param', dtype=tf.float64)
+        l_branch_p = tf.Variable(self.args.pb_c, constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6), 
+            name='l_branch_topo_param', dtype=tf.float64)
+        r_branch_p = tf.Variable(self.args.pb_c, constraint=lambda x: tf.clip_by_value(x, 1e-6, 1e6), 
+            name='r_branch_topo_param', dtype=tf.float64)
         l_branch_dist  = tfp.distributions.Exponential(rate=l_branch_p)
         r_branch_dist  = tfp.distributions.Exponential(rate=r_branch_p)
         l_branch_samples_M = l_branch_dist.sample(self.M) 
@@ -358,7 +364,7 @@ class VCSMC:
     def cond_enumerate_over_K(self, potentials, map_to_indices, core, leafnode_num_record, num_topo, r, k):
         return k < self.K
 
-    def compute_potentials(self, r, core, leafnode_num_record, potentials):
+    def compute_potentials(self, r, core, leafnode_num_record):
         """
         Build a KxM array of probabilities called potentials, which will eventually become Categorical dist params
         - For each k:
@@ -411,7 +417,7 @@ class VCSMC:
                 log_weights, log_likelihood, jump_chains, jump_chain_tensor, r))
 
         # Twist the proposal
-        potentials, map_to_indices = self.compute_potentials(r, core, leafnode_num_record, potentials)
+        potentials, map_to_indices = self.compute_potentials(r, core, leafnode_num_record)
 
         # Extend partial states
         coalesced_indices, remaining_indices, q_log_proposal, jump_chain_tensor = \
@@ -494,8 +500,7 @@ class VCSMC:
         self.jump_chain_tensor = tf.constant([self.taxa] * K, name='JumpChainK')
         v_minus = tf.constant(1, shape=(K, ), dtype=tf.int32)  # to be used in overcounting_correct
 
-        num_topo = int(self.N*(self.N-1)/2)
-        potentials = tf.constant(0, shape=(self.K, num_topo), dtype=tf.float64)
+        potentials = tf.constant(0, shape=(self.K, 1), dtype=tf.float64)
 
         # --- MAIN LOOP ----+
         log_weights, log_likelihood, log_likelihood_tilde, self.jump_chains, self.jump_chain_tensor, \
