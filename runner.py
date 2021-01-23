@@ -112,14 +112,8 @@ if __name__ == "__main__":
 
 
     if corona_data:
-        #max_site = 300
-        datadict_raw = pd.read_pickle('data/betacoronavirus_p4.pickle')
-        datadict = {}
-        datadict['taxa'] = datadict_raw['taxa']
-        datadict['genome'] = np.array(datadict_raw['genome'])[:, 10000:10100, :]
-        # print(datadict['taxa'])
-        # for i in range(100):
-        #     print(datadict['genome'][0,i,:])
+        datadict = pd.read_pickle('data/coronavirus.p')
+
 
     if primate_data:
         datadict_raw = pd.read_pickle('data/primate.p')
