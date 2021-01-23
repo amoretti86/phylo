@@ -430,7 +430,7 @@ class VCSMC:
         """
 
         # Resample
-        log_likelihood_tilde, core, leafnode_num_record, jump_chains, jump_chain_tensor = tf.cond(r > 100,
+        log_likelihood_tilde, core, leafnode_num_record, jump_chains, jump_chain_tensor = tf.cond(r > 0,
             lambda: self.cond_true_resample(log_likelihood_tilde, core, leafnode_num_record, 
                 log_weights, log_likelihood, jump_chains, jump_chain_tensor, r),
             lambda: self.cond_false_resample(log_likelihood_tilde, core, leafnode_num_record, 
