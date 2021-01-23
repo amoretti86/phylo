@@ -28,33 +28,33 @@ def ncr(n, r):
 
 # @staticmethod
 def _double_factorial_loop_body(n, result, two):
-  result = tf.where(tf.greater_equal(n, two), result * n, result)
-  return n - two, result, two
+    result = tf.where(tf.greater_equal(n, two), result + tf.math.log(n), result)
+    return n - two, result, two
 
 # @staticmethod
 def _double_factorial_loop_condition(n, result, two):
-  del result  # Unused
-  return tf.cast(tf.math.count_nonzero(tf.greater_equal(n, two)), tf.bool)
+    del result  # Unused
+    return tf.cast(tf.math.count_nonzero(tf.greater_equal(n, two)), tf.bool)
 
 # @staticmethod
 def log_double_factorial(n):
-  """Computes the double factorial of `n`.
-  Note:
-    In the following, A1 to An are optional batch dimensions.
-  Args:
-    n: A tensor of shape `[A1, ..., An]` containing positive integer values.
-  Returns:
-    A tensor of shape `[A1, ..., An]` containing the double factorial of `n`.
-  """
-  n = tf.convert_to_tensor(value=n)
+    """Computes the double factorial of `n`.
+      Note:
+        In the following, A1 to An are optional batch dimensions.
+      Args:
+        n: A tensor of shape `[A1, ..., An]` containing positive integer values.
+      Returns:
+        A tensor of shape `[A1, ..., An]` containing the double factorial of `n`.
+      """
+    n = tf.cast(tf.convert_to_tensor(value=n), tf.float64)
 
-  two = tf.ones_like(n) * 2
-  result = tf.ones_like(n)
-  _, result, _ = tf.while_loop(
-      cond=_double_factorial_loop_condition,
-      body=_double_factorial_loop_body,
-      loop_vars=[n, result, two])
-  return tf.log(tf.cast(result, tf.float64))
+    two = tf.ones_like(n) * 2
+    result = tf.math.log(tf.ones_like(n))
+    _, result, _ = tf.while_loop(
+        cond=_double_factorial_loop_condition,
+        body=_double_factorial_loop_body,
+        loop_vars=[n, result, two])
+    return result
 
 # @staticmethod
 def gather_across_2d(a, idx, a_shape_1=None, idx_shape_1=None):
