@@ -2,7 +2,6 @@ import logging
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # FATAL
 logging.getLogger('tensorflow').setLevel(logging.FATAL)
-import vcsmc_twist as vcsmc
 import numpy as np
 import argparse
 import pandas as pd
@@ -50,6 +49,9 @@ def parse_args():
                        type=int,
                        help='number of subparticles to compute twisting potentials',
                        default=10)
+    parser.add_argument('--twisting', default=False, type=lambda x: (str(x).lower() == 'true'))
+
+
     args = parser.parse_args()
     return args
 
@@ -61,6 +63,10 @@ if __name__ == "__main__":
     hohna_data = False
     load_strings = False
     simulate_data = False
+    hohna_data_1 = False
+    hohna_data_2 = False
+    hohna_data_3 = False
+    hohna_data_4 = False
 
     args = parse_args()
 
@@ -83,7 +89,8 @@ if __name__ == "__main__":
                           'C': [0, 1, 0, 0],
                           'G': [0, 0, 1, 0],
                           'T': [0, 0, 0, 1],
-                          '-': [1, 1, 1, 1]}
+                          '-': [1, 1, 1, 1],
+                          '?': [1, 1, 1, 1]}
     alphabet = np.array([[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]])
 
 
@@ -104,11 +111,26 @@ if __name__ == "__main__":
                     'genome': genomes_NxSxA}
         return datadict
 
-    if hohna_data:
+    if hohna_data or hohna_data_1:
         datadict_raw = pd.read_pickle('data/hohna_datasets/DS1.pickle')
         genome_strings = list(datadict_raw.values())
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
         # print(datadict['genome'].shape)
+        
+    if hohna_data_2:
+        datadict_raw = pd.read_pickle('data/hohna_datasets/DS2.pickle')
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
+        
+    if hohna_data_3:
+        datadict_raw = pd.read_pickle('data/hohna_datasets/DS3.pickle')
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
+        
+    if hohna_data_4:
+        datadict_raw = pd.read_pickle('data/hohna_datasets/DS4.pickle')
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
 
 
     if corona_data:
@@ -134,6 +156,11 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
 
+    if args.twisting == True:
+        import vcsmc_twist as vcsmc
+    else:
+        import vcsmc as vcsmc
+        
 
     #pdb.set_trace()
     vcsmc = vcsmc.VCSMC(datadict, K=args.n_particles, args=args)
