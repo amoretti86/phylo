@@ -570,7 +570,7 @@ class VCSMC:
         
         # Create local directory and save experiment results
         tm = str(datetime.now())
-        local_rlt_root = './results/'
+        local_rlt_root = './results/' + str(self.args.dataset) + '/' + str(self.args.twisting) + '/' + str(self.args.n_particles) + '/'
         save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
         if not os.path.exists(save_dir): os.makedirs(save_dir)
         rp = open(save_dir + "run_parameters.txt", "w")
