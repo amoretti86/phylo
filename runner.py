@@ -132,6 +132,26 @@ if __name__ == "__main__":
         datadict_raw = pd.read_pickle('data/hohna_datasets/DS4.pickle')
         genome_strings = list(datadict_raw.values())
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
+        
+    if hohna_data_5:
+        datadict_raw = pd.read_pickle('data/hohna_datasets/DS5.pickle')
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
+        
+    if hohna_data_6:
+        datadict_raw = pd.read_pickle('data/hohna_datasets/DS6.pickle')
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
+        
+    if hohna_data_7:
+        datadict_raw = pd.read_pickle('data/hohna_datasets/DS7.pickle')
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
+        
+    if hohna_data_8:
+        datadict_raw = pd.read_pickle('data/hohna_datasets/DS8.pickle')
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
 
 
     if corona_data:
