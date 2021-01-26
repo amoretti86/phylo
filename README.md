@@ -1,10 +1,12 @@
-To run using primates data, type in terminal: 
+Type in terminal: 
 
 `python runner.py 
-   --dataset=primate_data 
-   --n_particles=128 
-   --batch_size=256 
-   --learning_rate=0.01 
+   --dataset=[some_data] 
+   --n_particles=[some_number]
+   --batch_size=[some_number]
+   --learning_rate=[some_number]
+   --twisting=[true/false]
+   --jcmodel=[true/false]
    --num_epoch=100`   
 
 This runner.py file assumes that all datasets (`primate.p`, for example) are directly put under a folder called 'data'
