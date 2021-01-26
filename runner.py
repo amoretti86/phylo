@@ -14,9 +14,6 @@ def parse_args():
     parser.add_argument('--dataset',
                         help='benchmark dataset to use.',
                         default='primate_data')
-    parser.add_argument('--memory_optimization',
-                        help='Use memory optimization?',
-                        default='on')
     parser.add_argument('--n_particles',
                         type=int,
                         help='number of SMC samples.',
@@ -50,6 +47,10 @@ def parse_args():
                        help='number of subparticles to compute twisting potentials',
                        default=10)
     parser.add_argument('--twisting', default=False, type=lambda x: (str(x).lower() == 'true'))
+    parser.add_argument('--jcmodel', default=False, type=lambda x: (str(x).lower() == 'true'))
+    parser.add_argument('--memory_optimization',
+                        help='Use memory optimization?',
+                        default='on')
 
 
     args = parser.parse_args()
