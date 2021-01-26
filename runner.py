@@ -68,6 +68,10 @@ if __name__ == "__main__":
     hohna_data_2 = False
     hohna_data_3 = False
     hohna_data_4 = False
+    hohna_data_5 = False
+    hohna_data_6 = False
+    hohna_data_7 = False
+    hohna_data_8 = False
 
     args = parse_args()
 
