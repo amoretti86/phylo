@@ -116,18 +116,21 @@ class VCSMC:
         self.N = len(self.genome_NxSxA)
         self.S = len(self.genome_NxSxA[0])
         self.A = len(self.genome_NxSxA[0, 0])
-        self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
         self.left_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_branches_param'))
         self.right_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='right_branches_param'))
-        self.stationary_probs = self.get_stationary_probs()
         if not args.jcmodel:
             self.y_q = tf.linalg.set_diag(tf.Variable(np.zeros((self.A, self.A)) + 1/self.A, dtype=tf.float64, name='Qmatrix'), [0]*self.A)
             self.Qmatrix = self.get_Q()
+            self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
+            self.stationary_probs = self.get_stationary_probs()
         else:
             self.Qmatrix = tf.linalg.set_diag(
                 tf.constant(np.zeros((self.A, self.A)) + 1/self.A, dtype=tf.float64, name='Qmatrix'),
                 [-(self.A-1)/self.A] * self.A
             )
+            self.y_station = tf.constant(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
+            self.stationary_probs = self.get_stationary_probs()
+
 
     def get_stationary_probs(self):
         """ Compute stationary probabilities of the Q matrix """
@@ -463,7 +466,7 @@ class VCSMC:
         
         log_weights_r = log_likelihood_r - log_likelihood_tilde - \
         (tf.log(left_branches_param_r) - left_branches_param_r * l_branch + tf.log(right_branches_param_r) - \
-        right_branches_param_r * r_branch) + tf.cast(v_minus, tf.float64) - q_log_proposal
+        right_branches_param_r * r_branch) + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal
 
         log_weights = tf.concat([log_weights, [log_weights_r]], axis=0)
         log_likelihood = tf.concat([log_likelihood, [log_likelihood_r]], axis=0) # pi(t) = pi(Y|t, b, theta) * pi(t, b|theta) / pi(Y)
@@ -493,7 +496,7 @@ class VCSMC:
 
         log_weights = tf.constant(0, shape=(1, K), dtype=tf.float64)
         log_likelihood = tf.constant(0, shape=(1, K), dtype=tf.float64)
-        log_likelihood_tilde = tf.constant(np.zeros(K) + 1/K, dtype=tf.float64)
+        log_likelihood_tilde = tf.constant(np.zeros(K) + np.log(1/K), dtype=tf.float64)
 
         self.jump_chains = tf.constant('', shape=(K, 1))
         self.jump_chain_tensor = tf.constant([self.taxa] * K, name='JumpChainK')
@@ -621,7 +624,8 @@ class VCSMC:
                                self.v_minus,
                                self.left_branches_param,
                                self.right_branches_param,
-                               self.potentials],
+                               self.potentials,
+                               self.jump_chains],
                                feed_dict={self.core: data})
             cost = output[0]
             stats = output[1]
@@ -636,6 +640,7 @@ class VCSMC:
             lb_param = output[10]
             rb_param = output[11]
             potentials = output[12]
+            jc = output[13]
             print('Epoch', i+1)
             print('ELBO\n', round(-cost, 3))
             print('Stationary probabilities\n', stats)
@@ -650,6 +655,10 @@ class VCSMC:
             print('RB param:\n', rb_param)
             print('Log likelihood at R\n', np.round(log_lik_R,3))
             # print('Overcounting\n', overcount)
+            print('Jump chains of one particle')
+            for i in range(len(jc)):
+                print(jc[i])
+                break
             elbos.append(-cost)
             Qmatrices.append(Qs)
             left_branches.append(lb)
@@ -658,8 +667,6 @@ class VCSMC:
             ll_tilde.append(log_lik_tilde)
             ll_R.append(log_lik_R)
             log_weights.append(log_Ws)
-            #pdb.set_trace()
-            jc = sess.run(self.jump_chains, feed_dict={self.core: data})
             jump_chain_evolution.append(jc)
             at = datetime.now()
             print('Time spent\n', at-bt, '\n-----------------------------------------')
