@@ -613,7 +613,7 @@ class VCSMC:
         save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
         if not os.path.exists(save_dir): os.makedirs(save_dir)
         rp = open(save_dir + "run_parameters.txt", "w")
-        rp.write('Initial evaluation of ELBO : ' + str(initial_eval))
+        rp.write('Initial evaluation of ELBO : ' + str(initial_list[0]))
         rp.write('\n')
         for k,v in vars(self.args).items():
             rp.write(str(k) + ' : ' + str(v))
