@@ -116,21 +116,18 @@ class VCSMC:
         self.N = len(self.genome_NxSxA)
         self.S = len(self.genome_NxSxA[0])
         self.A = len(self.genome_NxSxA[0, 0])
+        self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
         self.left_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_branches_param'))
         self.right_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='right_branches_param'))
+        self.stationary_probs = self.get_stationary_probs()
         if not args.jcmodel:
             self.y_q = tf.linalg.set_diag(tf.Variable(np.zeros((self.A, self.A)) + 1/self.A, dtype=tf.float64, name='Qmatrix'), [0]*self.A)
             self.Qmatrix = self.get_Q()
-            self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
-            self.stationary_probs = self.get_stationary_probs()
         else:
             self.Qmatrix = tf.linalg.set_diag(
                 tf.constant(np.zeros((self.A, self.A)) + 1/self.A, dtype=tf.float64, name='Qmatrix'),
                 [-(self.A-1)/self.A] * self.A
             )
-            self.y_station = tf.constant(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
-            self.stationary_probs = self.get_stationary_probs()
-
 
     def get_stationary_probs(self):
         """ Compute stationary probabilities of the Q matrix """
@@ -334,14 +331,15 @@ class VCSMC:
         r_data_KxSxA = tf.squeeze(gather_across_core(core, r_idx, self.N-r, 1))
         l_data_MKxSxA = tf.reshape(tf.tile([l_data_KxSxA], [self.M,1,1,1]), (self.K*self.M, -1, self.A))
         r_data_MKxSxA = tf.reshape(tf.tile([r_data_KxSxA], [self.M,1,1,1]), (self.K*self.M, -1, self.A))
-        l_branch_p = tf.exp(tf.Variable(self.args.pb_c, name='l_branch_topo_param', dtype=tf.float64))
-        r_branch_p = tf.exp(tf.Variable(self.args.pb_c, name='r_branch_topo_param', dtype=tf.float64))
-        l_branch_dist  = tfp.distributions.Exponential(rate=l_branch_p)
-        r_branch_dist  = tfp.distributions.Exponential(rate=r_branch_p)
+        left_branches_param_r = tf.gather(self.left_branches_param, r)
+        right_branches_param_r = tf.gather(self.right_branches_param, r)
+        l_branch_dist  = tfp.distributions.Exponential(rate=left_branches_param_r)
+        r_branch_dist  = tfp.distributions.Exponential(rate=right_branches_param_r)
         l_branch_samples_MK = l_branch_dist.sample(self.K * self.M) 
         r_branch_samples_MK = r_branch_dist.sample(self.K * self.M) 
         
-        mtx_MKxSxA = self.broadcast_conditional_likelihood_K(l_data_MKxSxA, r_data_MKxSxA, l_branch_samples_MK, r_branch_samples_MK)
+        mtx_MKxSxA = self.broadcast_conditional_likelihood_K(
+            l_data_MKxSxA, r_data_MKxSxA, l_branch_samples_MK, r_branch_samples_MK)
         mtx_KxSxA = tf.reduce_mean(tf.reshape(mtx_MKxSxA, (self.M, self.K, -1, self.A)), axis=0)
         
         l_leafnode_num = gather_across_2d(leafnode_num_record, l_idx, self.N-r, 1)
@@ -411,7 +409,8 @@ class VCSMC:
         by iterating over rank events.
         """
         # Resample
-        log_likelihood_tilde, core, leafnode_num_record, jump_chains, jump_chain_tensor = tf.cond(r > 0,
+        log_likelihood_tilde, core, leafnode_num_record, jump_chains, jump_chain_tensor = tf.cond(
+            r > 0,
             lambda: self.cond_true_resample(log_likelihood_tilde, core, leafnode_num_record, 
                 log_weights, log_likelihood, jump_chains, jump_chain_tensor, r),
             lambda: self.cond_false_resample(log_likelihood_tilde, core, leafnode_num_record, 
@@ -573,13 +572,17 @@ class VCSMC:
         sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
-        initial_eval = round(sess.run(-self.cost, feed_dict={self.core: data}), 3)
-        print('===================\nInitial evaluation of ELBO:', initial_eval, '\n===================')
+        initial_list = sess.run([-self.cost, self.jump_chains], feed_dict={self.core: data})
+        print('===================\nInitial evaluation of ELBO:', round(initial_list[0], 3))
+        print('Initial jump chain:')
+        print(initial_list[1][0])
+        print('===================')
         print(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=tf.get_variable_scope().name))
         
         # Create local directory and save experiment results
         tm = str(datetime.now())
-        local_rlt_root = './results/' + str(self.args.dataset) + '/' + str(self.args.twisting) + '/' + str(self.args.n_particles) + '/'
+        local_rlt_root = './results/' + str(self.args.dataset) + '/' + str(self.args.twisting) + \
+          '/' + str(self.args.n_particles) + '/'
         save_dir = local_rlt_root + (tm[:10]+'-'+tm[11:13]+tm[14:16]+tm[17:19]) + '/'
         if not os.path.exists(save_dir): os.makedirs(save_dir)
         rp = open(save_dir + "run_parameters.txt", "w")
