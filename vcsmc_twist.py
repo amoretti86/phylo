@@ -116,18 +116,19 @@ class VCSMC:
         self.N = len(self.genome_NxSxA)
         self.S = len(self.genome_NxSxA[0])
         self.A = len(self.genome_NxSxA[0, 0])
-        self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
         self.left_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_branches_param'))
         self.right_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='right_branches_param'))
-        self.stationary_probs = self.get_stationary_probs()
         if not args.jcmodel:
             self.y_q = tf.linalg.set_diag(tf.Variable(np.zeros((self.A, self.A)) + 1/self.A, dtype=tf.float64, name='Qmatrix'), [0]*self.A)
             self.Qmatrix = self.get_Q()
+            self.y_station = tf.Variable(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
         else:
             self.Qmatrix = tf.linalg.set_diag(
                 tf.constant(np.zeros((self.A, self.A)) + 1/self.A, dtype=tf.float64, name='Qmatrix'),
                 [-(self.A-1)/self.A] * self.A
             )
+            self.y_station = tf.constant(np.zeros(self.A) + 1 / self.A, dtype=tf.float64, name='Stationary_probs')
+        self.stationary_probs = self.get_stationary_probs()
 
     def get_stationary_probs(self):
         """ Compute stationary probabilities of the Q matrix """
