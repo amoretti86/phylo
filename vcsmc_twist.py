@@ -57,7 +57,7 @@ def log_double_factorial(n):
     return result
 
 # @staticmethod
-def gather_across_2d(a, idx, a_shape_1=None, idx_shape_1=None):
+def gather_across_2d(a, idx, a_shape_1=None, idx_shape_1=None, a_shape_0=None):
     '''
     Gathers as such:
     if a is K-by-N, idx is K-by-M, then it returns a Tensor with structure like
@@ -68,12 +68,12 @@ def gather_across_2d(a, idx, a_shape_1=None, idx_shape_1=None):
         a_shape_1 = a.shape[1]
     if idx_shape_1 is None:
         idx_shape_1 = idx.shape[1]
-
-    K = a.shape[0]
-    a_reshaped = tf.reshape(a, [K * a_shape_1, -1])
-    add_to_idx = a_shape_1 * tf.transpose(tf.tile(tf.expand_dims(tf.range(K), axis=0), [idx_shape_1,1]))
+    if a_shape_0 is None:
+        a_shape_0 = a.shape[0]
+    a_reshaped = tf.reshape(a, [a_shape_0 * a_shape_1, -1])
+    add_to_idx = a_shape_1 * tf.transpose(tf.tile(tf.expand_dims(tf.range(a_shape_0), axis=0), [idx_shape_1,1]))
     a_gathered = tf.gather(a_reshaped, idx + add_to_idx)
-    a_gathered = tf.reshape(a_gathered, [K, -1])
+    a_gathered = tf.reshape(a_gathered, [a_shape_0, -1])
     return a_gathered
 
 # @staticmethod
@@ -214,14 +214,18 @@ class VCSMC:
 
         return data_loglik + tree_logprior
 
-    def broadcast_compute_tree_posterior_K(self, data_KxSxA, leafnode_num_record):
+    def broadcast_compute_tree_posterior_K(self, data_KxSxA, leafnode_num_record, MK=False):
         """
         Forms a log probability measure by dotting the stationary probs with tree likelihood
         And add that to log-prior of tree topology
         NOTE: we add log-prior of branch-lengths in body_update_weights
         """
-        #with tf.device('/gpu:1'): 
-        stationary_probs = tf.tile(tf.expand_dims(tf.transpose(self.stationary_probs), axis=0), [self.K, 1, 1])
+        #with tf.device('/gpu:1'):
+        if MK:
+            stationary_probs = tf.tile(tf.expand_dims(tf.transpose(self.stationary_probs), axis=0), [self.K*self.M, 1, 1])
+            leafnode_num_record = tf.tile(leafnode_num_record, [self.M, 1])
+        else:
+            stationary_probs = tf.tile(tf.expand_dims(tf.transpose(self.stationary_probs), axis=0), [self.K, 1, 1])
         tree_lik = tf.squeeze(tf.matmul(data_KxSxA, stationary_probs))
         tree_loglik = tf.reduce_sum(tf.log(tree_lik), axis=1)
         tree_logprior = tf.reduce_mean(-log_double_factorial(2 * tf.maximum(leafnode_num_record, 2) - 3), axis=1)
@@ -288,9 +292,13 @@ class VCSMC:
         resampled_JC_K = tf.gather(JC_K, indices)
         return resampled_core, resampled_record, resampled_JC_K, indices
     
-    def extend_partial_state(self, JCK, potentials, map_to_indices, r):
+    def extend_partial_state(self, JCK, potentials, map_to_indices, l_br, r_br, r):
+        shape_1 = tf.cast(ncr(self.N-r, 2)*self.M, tf.int32)
+
         indices = tf.cast(tf.random.categorical(potentials, 1), tf.int32)
-        coalesced_indices = tf.cast(tf.gather_nd(map_to_indices, indices), tf.int32)
+        indices_remainder = tf.floordiv(indices, self.M)
+
+        coalesced_indices = tf.cast(tf.gather_nd(map_to_indices, indices_remainder), tf.int32)
         transformed_coalesced_indices = tf.cast(
             self.N*10*tf.reduce_sum(tf.one_hot(coalesced_indices, self.N-r), axis=1), tf.int32)
         all_indices = tf.tile(tf.expand_dims(tf.range(self.N-r), axis=0), [self.K,1])
@@ -304,28 +312,33 @@ class VCSMC:
         # Form new Jump Chain
         JCK = tf.concat([JC_keep, tf.expand_dims(particle_coalesced, axis=1)], axis=1)
         
-        q_log_proposal = gather_across_2d(potentials, indices, tf.cast(ncr(self.N-r, 2), tf.int32), 1)
+        q_log_proposal = gather_across_2d(potentials, indices, shape_1, 1)
         q_log_proposal = tf.reduce_mean(q_log_proposal, axis=1) # q should be Kx1, but is Kx?, and reduce_mean simply changes ? to 1
+        l_br = gather_across_2d(l_br, indices, shape_1, 1)
+        l_br = tf.squeeze(tf.reduce_mean(l_br, axis=1))
+        r_br = gather_across_2d(r_br, indices, shape_1, 1)
+        r_br = tf.squeeze(tf.reduce_mean(r_br, axis=1))
 
-        return coalesced_indices, remaining_indices, q_log_proposal, JCK
+        return coalesced_indices, remaining_indices, q_log_proposal, l_br, r_br, JCK
 
-    def body1_enumerate_over_topo(self, potentials, map_to_indices, core, leafnode_num_record, r, r1):
-        potentials, map_to_indices, core_, leafnode_num_record_, r_, r1, r2 = tf.while_loop(
+    def body1_enumerate_over_topo(self, potentials, map_to_indices, core, leafnode_num_record, l_br, r_br, r, r1):
+        potentials, map_to_indices, core_, leafnode_num_record_, l_br, r_br, r_, r1, r2 = tf.while_loop(
             self.cond2_enumerate_over_topo,
             self.body2_enumerate_over_topo,
-            loop_vars = [potentials, map_to_indices, core, leafnode_num_record, r, r1, r1+1],
-            shape_invariants = [tf.TensorShape([None, self.K]), tf.TensorShape([None, 2]), 
+            loop_vars = [potentials, map_to_indices, core, leafnode_num_record, l_br, r_br, r, r1, r1+1],
+            shape_invariants = [tf.TensorShape([None, self.M*self.K]), tf.TensorShape([None, 2]), 
             core.get_shape(), leafnode_num_record.get_shape(),
+            tf.TensorShape([None, self.M*self.K]), tf.TensorShape([None, self.M*self.K]),
             tf.TensorShape([]), tf.TensorShape([]), tf.TensorShape([])])
 
         r1 = r1 + 1
 
-        return potentials, map_to_indices, core, leafnode_num_record, r, r1
+        return potentials, map_to_indices, core, leafnode_num_record, l_br, r_br, r, r1
     
-    def cond1_enumerate_over_topo(self, potentials, map_to_indices, core, leafnode_num_record, r, r1):
+    def cond1_enumerate_over_topo(self, potentials, map_to_indices, core, leafnode_num_record, l_br, r_br, r, r1):
         return r1 < self.N - r - 1
     
-    def body2_enumerate_over_topo(self, potentials, map_to_indices, core, leafnode_num_record, r, r1, r2):
+    def body2_enumerate_over_topo(self, potentials, map_to_indices, core, leafnode_num_record, l_br, r_br, r, r1, r2):
         l_idx = tf.tile([[r1]], [self.K, 1])
         r_idx = tf.tile([[r2]], [self.K, 1])
         l_data_KxSxA = tf.squeeze(gather_across_core(core, l_idx, self.N-r, 1))
@@ -341,25 +354,26 @@ class VCSMC:
         
         mtx_MKxSxA = self.broadcast_conditional_likelihood_K(
             l_data_MKxSxA, r_data_MKxSxA, l_branch_samples_MK, r_branch_samples_MK)
-        mtx_KxSxA = tf.reduce_mean(tf.reshape(mtx_MKxSxA, (self.M, self.K, -1, self.A)), axis=0)
+        # mtx_KxSxA = tf.reduce_mean(tf.reshape(mtx_MKxSxA, (self.M, self.K, -1, self.A)), axis=0)
         
         l_leafnode_num = gather_across_2d(leafnode_num_record, l_idx, self.N-r, 1)
         r_leafnode_num = gather_across_2d(leafnode_num_record, r_idx, self.N-r, 1)
         leafnode_num = l_leafnode_num + r_leafnode_num
 
-        #joint_prob = self.compute_tree_posterior(mtx, leafnode_num)
-        joint_prob = self.broadcast_compute_tree_posterior_K(mtx_KxSxA, leafnode_num)
-        joint_prob -= self.broadcast_compute_tree_posterior_K(l_data_KxSxA, l_leafnode_num)
-        joint_prob -= self.broadcast_compute_tree_posterior_K(r_data_KxSxA, r_leafnode_num)
+        joint_prob = self.broadcast_compute_tree_posterior_K(mtx_MKxSxA, leafnode_num, True)
+        joint_prob -= self.broadcast_compute_tree_posterior_K(l_data_MKxSxA, l_leafnode_num, True)
+        joint_prob -= self.broadcast_compute_tree_posterior_K(r_data_MKxSxA, r_leafnode_num, True)
 
         potentials = tf.concat([potentials, [joint_prob]], axis=0)
         map_to_indices = tf.concat([map_to_indices, [[r1, r2]]], axis=0)
+        l_br = tf.concat([l_br, [l_branch_samples_MK]], axis=0)
+        r_br = tf.concat([r_br, [r_branch_samples_MK]], axis=0)
 
         r2 = r2 + 1
 
-        return potentials, map_to_indices, core, leafnode_num_record, r, r1, r2
+        return potentials, map_to_indices, core, leafnode_num_record, l_br, r_br, r, r1, r2
     
-    def cond2_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_num_record, r, r1, r2):
+    def cond2_enumerate_over_topo(self, potentials_k, map_to_indices, core, leafnode_num_record, l_br, r_br, r, r1, r2):
         return r2 < self.N - r
 
     def compute_potentials(self, r, core, leafnode_num_record):
@@ -373,22 +387,33 @@ class VCSMC:
             - save it into potentials
         """
         num_topo = tf.cast(ncr(self.N-r, 2), tf.int32)
-        potentials = tf.constant(0, shape=(1, self.K), dtype=tf.float64)
+        potentials = tf.constant(0, shape=(1, self.M*self.K), dtype=tf.float64)
         map_to_indices = tf.constant(0, shape=(1,2), dtype=tf.float64)
+        l_br = tf.constant(0, shape=(1, self.M*self.K), dtype=tf.float64)
+        r_br = tf.constant(0, shape=(1, self.M*self.K), dtype=tf.float64)
 
-        potentials, map_to_indices, core_, leafnode_num_record_, r_, r__ = tf.while_loop(
+        potentials, map_to_indices, core_, leafnode_num_record_, l_br, r_br, r_, r__ = tf.while_loop(
             self.cond1_enumerate_over_topo, 
             self.body1_enumerate_over_topo,
-            loop_vars = [potentials, map_to_indices, core, leafnode_num_record, r, 0],
-            shape_invariants = [tf.TensorShape([None, self.K]), tf.TensorShape([None, 2]), 
-            core.get_shape(), leafnode_num_record.get_shape(),
+            loop_vars = [potentials, map_to_indices, core, leafnode_num_record, l_br, r_br, r, 0],
+            shape_invariants = [tf.TensorShape([None, self.M*self.K]), tf.TensorShape([None, 2]), 
+            core.get_shape(), leafnode_num_record.get_shape(), 
+            tf.TensorShape([None, self.M*self.K]), tf.TensorShape([None, self.M*self.K]),
             tf.TensorShape([]), tf.TensorShape([])]
             )
-        potentials = tf.transpose(tf.gather(potentials, tf.range(1, num_topo+1)))
+        potentials = tf.gather(potentials, tf.range(1, num_topo+1))
+        potentials = tf.reshape(potentials, (num_topo*self.M, self.K))
+        potentials = tf.transpose(potentials)
         potentials = potentials - tf.expand_dims(tf.reduce_logsumexp(potentials, axis=1), axis=1)
         map_to_indices = tf.gather(map_to_indices, tf.range(1, num_topo+1))
+        l_br = tf.gather(l_br, tf.range(1, num_topo+1))
+        l_br = tf.reshape(l_br, (num_topo*self.M, self.K))
+        l_br = tf.transpose(l_br)
+        r_br = tf.gather(r_br, tf.range(1, num_topo+1))
+        r_br = tf.reshape(r_br, (num_topo*self.M, self.K))
+        r_br = tf.transpose(r_br)
 
-        return potentials, map_to_indices
+        return potentials, map_to_indices, l_br, r_br
 
     def cond_true_resample(self, log_likelihood_tilde, core, leafnode_num_record, 
         log_weights, log_likelihood, jump_chains, jump_chain_tensor, r):
@@ -418,21 +443,15 @@ class VCSMC:
                 log_weights, log_likelihood, jump_chains, jump_chain_tensor, r))
 
         # Twist the proposal
-        potentials, map_to_indices = self.compute_potentials(r, core, leafnode_num_record)
+        potentials, map_to_indices, l_br, r_br = self.compute_potentials(r, core, leafnode_num_record)
 
         # Extend partial states
-        coalesced_indices, remaining_indices, q_log_proposal, jump_chain_tensor = \
-        self.extend_partial_state(jump_chain_tensor, potentials, map_to_indices, r)
+        coalesced_indices, remaining_indices, q_log_proposal, l_br, r_br, jump_chain_tensor = \
+        self.extend_partial_state(jump_chain_tensor, potentials, map_to_indices, l_br, r_br, r)
 
         # Branch lengths
-        left_branches_param_r = tf.gather(self.left_branches_param, r)
-        right_branches_param_r = tf.gather(self.right_branches_param, r)
-        q_l_branch_dist = tfp.distributions.Exponential(rate=left_branches_param_r)
-        q_r_branch_dist = tfp.distributions.Exponential(rate=right_branches_param_r)
-        q_l_branch_samples = q_l_branch_dist.sample(self.K) 
-        q_r_branch_samples = q_r_branch_dist.sample(self.K) 
-        left_branches = tf.concat([left_branches, [q_l_branch_samples]], axis=0) 
-        right_branches = tf.concat([right_branches, [q_r_branch_samples]], axis=0) 
+        left_branches = tf.concat([left_branches, [l_br]], axis=0) 
+        right_branches = tf.concat([right_branches, [r_br]], axis=0) 
 
         # Update partial set data
         remaining_core = gather_across_core(core, remaining_indices, self.N-r, self.N-r-2, self.A) # Kx(N-r-2)xSxA
@@ -440,7 +459,7 @@ class VCSMC:
         r_coalesced_indices = tf.reshape(tf.gather(tf.transpose(coalesced_indices), 1), (self.K, 1))
         l_data_KxSxA = tf.squeeze(gather_across_core(core, l_coalesced_indices, self.N-r, 1, self.A))
         r_data_KxSxA = tf.squeeze(gather_across_core(core, r_coalesced_indices, self.N-r, 1, self.A))
-        new_mtx_KxSxA = self.broadcast_conditional_likelihood_K(l_data_KxSxA, r_data_KxSxA, q_l_branch_samples, q_r_branch_samples)
+        new_mtx_KxSxA = self.broadcast_conditional_likelihood_K(l_data_KxSxA, r_data_KxSxA, l_br, r_br)
         new_mtx_Kx1xSxA = tf.expand_dims(new_mtx_KxSxA, axis=1)
         core = tf.concat([remaining_core, new_mtx_Kx1xSxA], axis=1) # Kx(N-r-1)xSxA
 
@@ -452,6 +471,8 @@ class VCSMC:
         # Comptue weights
         log_likelihood_r = self.compute_forest_posterior(core, leafnode_num_record, r)
 
+        left_branches_param_r = tf.gather(self.left_branches_param, r)
+        right_branches_param_r = tf.gather(self.right_branches_param, r)
         left_branches_select = tf.gather(left_branches, tf.range(1, r+2)) # (r+1)xK
         right_branches_select = tf.gather(right_branches, tf.range(1, r+2)) # (r+1)xK
         left_branches_logprior = tf.reduce_sum(
