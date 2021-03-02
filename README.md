@@ -35,5 +35,3 @@ This runner.py file assumes that all datasets (`primate.p`, for example) are dir
      alt="VCSMC Figure"
      style="float: left; margin-right: 10px;" />
      
-*Log likelihood values for VCSMC (blue) VNCSMC (red) samples on the primates data averaged across 5 random seeds*
-
