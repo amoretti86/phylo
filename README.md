@@ -35,6 +35,5 @@ This runner.py file assumes that all datasets (`primate.p`, for example) are dir
      alt="VCSMC Figure"
      style="float: left; margin-right: 10px;" />
      
-*Log likelihood values for VCSMC (blue) with K = {4,8,16,32,64,128} samples and VNCSMC (red) with K = {4,8,16,32,64,128} and M = 1 samples on the primates data averaged across 5 random seeds. Higher values of K
-produce tighter ELBO / larger log likelihood values with lower stochastic gadient noise.*
+*Log likelihood values for VCSMC (blue) VNCSMC (red) samples on the primates data averaged across 5 random seeds*
 
