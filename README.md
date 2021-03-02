@@ -1,3 +1,8 @@
+<img src="https://github.com/amoretti86/phylo/blob/master/data/figures/primatesTVCSMC_5.png"
+     alt="VCSMC Figure"
+     style="float: left; margin-right: 10px;" />
+
+
 Type in terminal: 
 
 `python runner.py 
