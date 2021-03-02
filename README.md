@@ -12,7 +12,7 @@ This code provides a reference implementation of the Variational Combinatorial S
   
 VCSMC builds upon the Combinatorial Sequential Monte Carlo method which is also implemented as a reference:
 
-* [Bayesian Phylogenetic Inference Using a Combinatorial Sequential Monte Carlo Method](https://www.stats.ox.ac.uk/~doucet/wang_bouchardcote_doucet_BayesianphylogeneticscombinatorialSMC_JASA2015.pdf). \ 
+* [Bayesian Phylogenetic Inference Using a Combinatorial Sequential Monte Carlo Method(https://www.stats.ox.ac.uk/~doucet/wang_bouchardcote_doucet_BayesianphylogeneticscombinatorialSMC_JASA2015.pdf). \ 
 Liangliang Wang, Alexandre Bouchard-Côté & Arnaud Doucet (2015). \
 Journal of the American Statistical Association, 110:512, 1362-1374, DOI: 10.1080/01621459.2015.1054487
 
