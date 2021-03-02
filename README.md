@@ -10,7 +10,7 @@ This code provides a reference implementation of the Variational Combinatorial S
   Moretti, A.\*, Zhang, L.\*, Naesseth, C., Venner, H., Blei, D., Pe'er, I. \
   Under Review, 2021
   
-VCSMC builds upon the Combinatorial Sequential Monte Carlo method which is also implemented as a reference:
+VCSMC builds upon the Combinatorial Sequential Monte Carlo method (implemented as a reference):
 
 * [Bayesian Phylogenetic Inference Using a Combinatorial Sequential Monte Carlo Method](https://www.stats.ox.ac.uk/~doucet/wang_bouchardcote_doucet_BayesianphylogeneticscombinatorialSMC_JASA2015.pdf). <br>
 Liangliang Wang, Alexandre Bouchard-Côté & Arnaud Doucet (2015). \
@@ -33,7 +33,7 @@ This runner.py file assumes that all datasets (`primate.p`, for example) are dir
 
 <img src="https://github.com/amoretti86/phylo/blob/master/data/figures/primatesTVCSMC_5.png"
      alt="VCSMC Figure"
-     style="float: left; margin-right: 10px;" />
+     style="float: left; margin-right: 10px;" />{ width=75% }
      
 *Log likelihood values for VCSMC (blue) with K = {4,8,16,32,64,128} samples and VNCSMC (red) with K = {4,8,16,32,64,128} and M = 1 samples on the primates data averaged across 5 random seeds. Higher values of K
 produce tighter ELBO / larger log likelihood values with lower stochastic gadient noise.*
