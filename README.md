@@ -9,10 +9,13 @@ This code provides a reference implementation of the Variational Combinatorial S
 * [Variational Combinatorial Sequential Monte Carlo Methods for Bayesian Phylogenetic Inference](). \
   Moretti, A.\*, Zhang, L.\*, Naesseth, C., Venner, H., Blei, D., Pe'er, I. \
   Under Review, 2021
+  
+VCSMC builds upon the Combinatorial Sequential Monte Carlo method which is also implemented as a reference:
 
-<img src="https://github.com/amoretti86/phylo/blob/master/data/figures/primatesTVCSMC_5.png"
-     alt="VCSMC Figure"
-     style="float: left; margin-right: 10px;" />
+* [Bayesian Phylogenetic Inference Using a Combinatorial Sequential Monte Carlo Method](https://www.stats.ox.ac.uk/~doucet/wang_bouchardcote_doucet_BayesianphylogeneticscombinatorialSMC_JASA2015.pdf). \
+Liangliang Wang, Alexandre Bouchard-Côté & Arnaud Doucet (2015).\ 
+Journal of the American Statistical Association, 110:512, 1362-1374, DOI: 10.1080/01621459.2015.1054487
+
 
 
 To run, type the folowing in terminal: 
@@ -27,3 +30,9 @@ To run, type the folowing in terminal:
    --num_epoch=100`   
 
 This runner.py file assumes that all datasets (`primate.p`, for example) are directly put under a folder called 'data'
+
+<img src="https://github.com/amoretti86/phylo/blob/master/data/figures/primatesTVCSMC_5.png"
+     alt="VCSMC Figure"
+     style="float: left; margin-right: 10px;" />
+     *image caption*
+
