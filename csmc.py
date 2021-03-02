@@ -1,6 +1,10 @@
 """
-An implementation of the Combinatorial Sequential Monte Carlo algorithm
-for Phylogenetic Inference
+A reference implementation of the Combinatorial Sequential Monte Carlo algorithm
+for Bayesian Phylogenetic Inference from the publication
+
+Liangliang Wang, Alexandre Bouchard-Côté & Arnaud Doucet (2015) 
+Bayesian Phylogenetic Inference Using a Combinatorial Sequential Monte Carlo Method, 
+Journal of the American Statistical Association, 110:512, 1362-1374, DOI: 10.1080/01621459.2015.1054487
 """
 
 import numpy as np
