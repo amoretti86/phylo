@@ -17,7 +17,7 @@ Liangliang Wang, Alexandre Bouchard-Côté & Arnaud Doucet (2015).\
 Journal of the American Statistical Association, 110:512, 1362-1374, DOI: 10.1080/01621459.2015.1054487
 
 
-# Usage
+## Usage
 To run, type the folowing in terminal: 
 
 `python runner.py 
