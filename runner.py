@@ -73,6 +73,7 @@ if __name__ == "__main__":
     hohna_data_6 = False
     hohna_data_7 = False
     hohna_data_8 = False
+    primate_data_wang = False
 
     args = parse_args()
 
@@ -162,6 +163,11 @@ if __name__ == "__main__":
         datadict_raw = pd.read_pickle('data/primate.p')
         genome_strings = list(datadict_raw.values())
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir_blank)
+        
+    if primate_data_wang:
+        datadict_raw = pd.read_pickle('data/primates_small.p')
+        genome_strings = list(datadict_raw.values())
+        datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
 
     if simulate_data:
