@@ -5,6 +5,7 @@ logging.getLogger('tensorflow').setLevel(logging.FATAL)
 import numpy as np
 import argparse
 import pandas as pd
+import random
 
 # export KMP_DUPLICATE_LIB_OK=TRUE
 
@@ -38,19 +39,19 @@ def parse_args():
                        type=float,
                        help='Hyperparameter for branch length initialization.',
                        default=np.log(10))
-    parser.add_argument('--pb_c',
-                       type=float,
-                       help='Twisting Potential Branch Prior',
-                       default=np.log(0.1))
     parser.add_argument('--M',
                        type=int,
-                       help='number of subparticles to compute twisting potentials',
+                       help='number of subparticles to compute look-ahead particles',
                        default=10)
-    parser.add_argument('--twisting', default=False, type=lambda x: (str(x).lower() == 'true'))
-    parser.add_argument('--jcmodel', default=False, type=lambda x: (str(x).lower() == 'true'))
+    parser.add_argument('--nested', 
+                       default=False, 
+                       type=lambda x: (str(x).lower() == 'true'))
+    parser.add_argument('--jcmodel', 
+                       default=False, 
+                       type=lambda x: (str(x).lower() == 'true'))
     parser.add_argument('--memory_optimization',
-                        help='Use memory optimization?',
-                        default='on')
+                       help='Use memory optimization?',
+                       default='on')
 
 
     args = parser.parse_args()
@@ -85,11 +86,6 @@ if __name__ == "__main__":
                     'c': [0, 1, 0, 0],
                     'g': [0, 0, 1, 0],
                     't': [0, 0, 0, 1]}
-    Alphabet_dir_blank_old = {'A': [1, 0, 0, 0, 0],
-                              'C': [0, 1, 0, 0, 0],
-                              'G': [0, 0, 1, 0, 0],
-                              'T': [0, 0, 0, 1, 0],
-                              '-': [0, 0, 0, 0, 1]}
     Alphabet_dir_blank = {'A': [1, 0, 0, 0],
                           'C': [0, 1, 0, 0],
                           'G': [0, 0, 1, 0],
@@ -181,8 +177,8 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
 
-    if args.twisting == True:
-        import vcsmc_twist as vcsmc
+    if args.nested == True:
+        import vncsmc as vcsmc
     else:
         import vcsmc as vcsmc
         
