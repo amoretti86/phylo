@@ -8,7 +8,7 @@ This code provides a reference implementation of the Variational Combinatorial S
 
 * [Variational Combinatorial Sequential Monte Carlo Methods for Bayesian Phylogenetic Inference](). \
   Moretti, A.\*, Zhang, L.\*, Naesseth, C., Venner, H., Blei, D., Pe'er, I. \
-  Under Review, 2021
+  Uncertainty in Artificial Intelligence, 2021
   
 VCSMC builds upon the Combinatorial Sequential Monte Carlo method (implemented as a reference):
 
