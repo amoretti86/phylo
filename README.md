@@ -6,7 +6,7 @@ This code provides a reference implementation of the Variational Combinatorial S
   Moretti, A.\, Zhang, L., Pe'er, I. \
   Machine Learning in Computational Biology, 2020.
 
-* [Variational Combinatorial Sequential Monte Carlo Methods for Bayesian Phylogenetic Inference](). \
+* [Variational Combinatorial Sequential Monte Carlo Methods for Bayesian Phylogenetic Inference](https://arxiv.org/abs/2106.00075). \
   Moretti, A.\*, Zhang, L.\*, Naesseth, C., Venner, H., Blei, D., Pe'er, I. \
   Uncertainty in Artificial Intelligence, 2021
   
