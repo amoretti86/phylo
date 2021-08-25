@@ -1,5 +1,5 @@
 python == 3.7
-tensorflow == 1.15.0
+tensorflow == 2.5.1
 tensorflow_probability == 0.7.0
 numpy == 1.18.1
 scipy == 1.4.1
