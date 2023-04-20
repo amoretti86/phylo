@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument('--n_particles',
                         type=int,
                         help='number of SMC samples.',
-                        default=128)
+                        default=10)
     parser.add_argument('--batch_size',
                         type=int,
                         help='number of sites on genome per batch.',
@@ -74,6 +74,7 @@ if __name__ == "__main__":
     hohna_data_7 = False
     hohna_data_8 = False
     primate_data_wang = False
+    ginkgo = True
 
     args = parse_args()
 
@@ -182,11 +183,27 @@ if __name__ == "__main__":
         genome_strings = ['ACTTTGAGAG', 'ACTTTGACAG', 'ACTTTGACTG', 'ACTTTGACTC']
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
+    if ginkgo:
+        data = pd.read_pickle('data/gingko/test_data_14.p')
+        #print(np.swapaxes(data, 1, 2).shape)
+        datadict = {
+            'samples' : np.arange(data.shape[0]).astype(str).tolist(),
+            'data' : np.swapaxes(data, 1, 2)
+        }
+        #print(datadict['samples'])
+        #import pdb
+        #pdb.set_trace()
 
     if args.nested == True:
         import vncsmc as vcsmc
     else:
-        import vcsmc as vcsmc
+        import vcsmc_jet as vcsmc
+
+
+    if args.nested == True:
+        import vncsmc as vcsmc
+    else:
+        import vcsmc_jet as vcsmc
         
 
     #pdb.set_trace()
