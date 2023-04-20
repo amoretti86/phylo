@@ -126,7 +126,6 @@ class VCSMC:
         # self.left_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_branches_param'))
         # self.right_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='right_branches_param'))
         
-        self.t_cut = 1.1 ** 2
         
     def findTCut(self):
         tData = self.data_NxSxA[:, :,0] ** 2 - tf.norm(self.data_NxSxA[:, :,1:], axis = -1) ** 2
