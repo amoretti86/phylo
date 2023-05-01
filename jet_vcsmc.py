@@ -1,5 +1,5 @@
 """
-An implementation of Variational Combinatorial Sequential Monte Carlo for jet reconstruction under the Gingko model.
+An implementation of Variational Combinatorial Sequential Monte Carlo for Jet Reconstruction under the Gingko model.
   A variant of Combinatorial Sequential Monte Carlo is used to form a variational objective
   to simultaneously learn the parameters of the proposal and target distribution
   and perform jet reconstruction.
@@ -113,7 +113,8 @@ class VCSMC:
         self.data_NxSxA = datadict['data']
         
         # self.lam = tf.exp(tf.Variable(1.0+self.args.branch_prior, dtype = tf.float64))
-        self.lam = tf.Variable(1.5, dtype = tf.float64)
+        #self.lam = tf.Variable(1.5, dtype = tf.float64)
+        self.lam = tf.exp(tf.Variable(0+self.args.lambda_prior, dtype=tf.float64, name='lambda_param'))
         self.t_cut = tf.cast(self.findTCut(), dtype = tf.float64)
         
         self.K = K # number of monti carlo samples
@@ -121,10 +122,14 @@ class VCSMC:
         self.N = len(self.data_NxSxA) # number of leaves
         self.S = 2 # len(self.data_NxSxA[0]) # always 1 hack s.t. less rewrite
         self.A = 4 # len(self.data_NxSxA[0, 0]) # number of sites always 5 due to 4 vec + delta
-        #### change ####
         # the left and the right exp parameters (invariant masses)
-        # self.left_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_branches_param'))
-        # self.right_branches_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='right_branches_param'))
+        self.decay_param = tf.exp(tf.Variable(self.args.decay_prior, dtype=tf.float64, name='decay_param'))
+        self.decay_dist = tfp.distributions.Exponential(rate=self.decay_param)
+ 
+        # q_r_branch_dist = tfp.distributions.Exponential(rate=right_branches_param_r)
+        # q_l_branch_samples = q_l_branch_dist.sample(self.K) 
+        # self.left_decay_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_decay_param'))
+        # self.right_decay_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='right_decay_param'))
         
         
     def findTCut(self):
@@ -133,14 +138,26 @@ class VCSMC:
         return res
     
 
-    def llh_bc(self, l_data_Kx1x4, r_data_Kx1x4, lam, t_cut):
-
+    def llh_bc(self, l_data_Kx1x4, r_data_Kx1x4, t_cut, decay_factor_r): #lam, t_cut, decay_factor_r):
+        """
+        Accepts 4-vec for left and right nodes, 
+        Confirm the Kx1 vector of the current sampled decay rate is updated correctly
+        """
+        #pdb.set_trace()
+        # grab left invariant mass
         tL_Kx1 = l_data_Kx1x4[:, :,0] ** 2 - tf.norm(l_data_Kx1x4[:, :,1:], axis = -1) ** 2
-
+        # grab right invariant mass
         tR_Kx1 = r_data_Kx1x4[:, :,0] ** 2 - tf.norm(r_data_Kx1x4[:, :,1:], axis = -1) ** 2
 
         p_data_Kx1x4 = l_data_Kx1x4 + r_data_Kx1x4 ## eq (5)
+        # add left and right 4-vecs form parent 4-vec
+        # note that due to the exponential decay in the generative model, the parent
+        # invariant mass must be strictly greater than the sum of the left and right child invariant mass
+
+        # here we define the parent mass, which has not been scaled up to account for exponential decay
         tp_Kx1 = p_data_Kx1x4[:, :,0] ** 2 - tf.norm(p_data_Kx1x4[:, :,1:], axis = -1) ** 2
+        tp_Kx1 = tf.math.multiply(tp_Kx1, decay_factor_r) #  1.01) #decay_factor_r
+
 
         is_negative_Kx1 = tf.logical_or(tf.logical_or(tf.less(tL_Kx1, 0), tf.less(tR_Kx1, 0)), tf.less_equal(tp_Kx1, 0))
 
@@ -161,47 +178,60 @@ class VCSMC:
 
         def valid_calc(tp_Xx1, tL_Xx1, tR_Xx1):
 
-            def get_logp(tP_local_Xx1, t_Xx1, t_cut, lam):
+            def get_logp(tP_local_Xx1, t_Xx1, t_cut):#, lam):
+                """ Here we call the actual PDFs and CDFs defined in Eq (7) of the paper"""
 
-                def one(tP_local_Xx1, t_Xx1, t_cut, lam):
+                def prob_is_leaf(tP_local_Xx1, t_Xx1, t_cut):#, lam):
+                    """ The CDF defined in Eq (7) of the paper """
                     # Probability of the shower to stop F_s
-                    return - tf.math.log(1 - tf.math.exp(- (1 - 1e-3)*lam))\
-                           + tf.math.log(lam) - tf.math.log(tP_local_Xx1) - lam * t_Xx1 / tP_local_Xx1
+                    one_minus_cdf = 1 - tf.math.exp(- (1 - 1e-3)*self.lam)
+                    prob = - tf.math.log(one_minus_cdf)\
+                           + tf.math.log(self.lam) - tf.math.log(tP_local_Xx1) - self.lam * t_Xx1 / tP_local_Xx1
+                    return prob
 
-                def two(tP_local_Xx1, t_Xx1, t_cut, lam):
+                def prob_is_not_leaf(tP_local_Xx1, t_Xx1, t_cut):#, lam):
+                    """ The PDF defined in Eq (7) of the paper """
                     t_upper_Xx1 = tf.minimum(tP_local_Xx1, t_cut) #There are cases where tp2 < t_cut
-                    return -tf.math.log(1 - tf.math.exp(- (1 - 1e-3) * lam)) + \
-                            tf.math.log(1 - tf.math.exp(- lam * t_upper_Xx1 / tP_local_Xx1))
+                    one_minus_cdf = 1 - tf.math.exp(- (1 - 1e-3) * self. lam)
+                    prob = -tf.math.log(one_minus_cdf) + \
+                            tf.math.log(1 - tf.math.exp(- self.lam * t_upper_Xx1 / tP_local_Xx1))
+                    return prob
 
-                results_Xx1 = two(tP_local_Xx1, t_Xx1, t_cut, lam)
+                results_Xx1 = prob_is_not_leaf(tP_local_Xx1, t_Xx1, t_cut)#, self.lam)
 
                 indices_Yx1 = tf.where(tf.greater(tf.squeeze(t_Xx1), t_cut))
 
                 tP_local_new_Yx1 = tf.gather(tf.squeeze(tP_local_Xx1), indices_Yx1)
                 t_new_Yx1 = tf.gather(tf.squeeze(t_Xx1), indices_Yx1)
 
-                updates_Yx1 = one(tP_local_new_Yx1, t_new_Yx1, t_cut, lam)
+                updates_Yx1 = prob_is_leaf(tP_local_new_Yx1, t_new_Yx1, t_cut)#, lam)
 
                 results_Xx1 = tf.tensor_scatter_nd_update(results_Xx1, indices_Yx1, updates_Yx1)
 
                 return results_Xx1
 
+            # We always assign the left node as the node with the greater invariant mass for consistency
+            # To do this, we find the invariant mass squared for each node as a function of the parent
+            # by defining tpLR and tpRL using Eq (6) of the paper
+            # this is something akin to the parent invarinat mass in case left is bigger than right and the
+            # parent invariant mass in case right is bigger than left
             tpLR_Xx1 = (tf.sqrt(tp_Xx1) - tf.sqrt(tL_Xx1)) ** 2
             tpRL_Xx1 = (tf.sqrt(tp_Xx1) - tf.sqrt(tR_Xx1)) ** 2
 
-            logpLR_Xx1 = tf.cast(tf.math.log(1/2), dtype = tf.float64) + \
-                     get_logp(tp_Xx1, tL_Xx1, t_cut, lam) + \
-                     get_logp(tpLR_Xx1, tR_Xx1, t_cut, lam)
+            # Calculate the log propobability using the CDFs and PDFs
+            # for each of the two cases where the left/right node is ultimately greater
+            logpLR_Xx1 = tf.cast(tf.math.log(1/2), dtype = tf.float64) + get_logp(tp_Xx1, tL_Xx1, t_cut) + get_logp(tpLR_Xx1, tR_Xx1, t_cut) 
 
-            logpRL_Xx1 = tf.cast(tf.math.log(1/2), dtype = tf.float64) + \
-                     get_logp(tp_Xx1, tR_Xx1, t_cut, lam) + \
-                     get_logp(tpRL_Xx1, tL_Xx1, t_cut, lam)
+            logpRL_Xx1 = tf.cast(tf.math.log(1/2), dtype = tf.float64) + get_logp(tp_Xx1, tR_Xx1, t_cut) + get_logp(tpRL_Xx1, tL_Xx1, t_cut) #, self.lam)
 
+            # take the product of the two rightmost terms in Eq (8) where the one_minus_cdf term is distributed
             logp_split_Xx1 = tf.reduce_logsumexp(tf.stack([logpLR_Xx1, logpRL_Xx1]), axis = 0)
 
+            # Add the term for the likelihood for sampling uniformly over a 2-sphere
             logLH_Xx1 = logp_split_Xx1 + tf.math.log(1 / (4 * tf.constant(np.pi, dtype = tf.float64)))
 
             return tf.cast(logLH_Xx1, dtype = tf.float64)
+
 
         results_Kx1 = -tf.float64.max * tf.cast(tf.ones_like(is_negative_Kx1), dtype=tf.float64)
 
@@ -387,10 +417,19 @@ class VCSMC:
         r_coalesced_indices = tf.reshape(tf.gather(tf.transpose(coalesced_indices), 1), (self.K, 1))
         l_data_KxSxA = tf.squeeze(gather_across_core(core, l_coalesced_indices, self.N-r, 1, self.A))
         r_data_KxSxA = tf.squeeze(gather_across_core(core, r_coalesced_indices, self.N-r, 1, self.A))
-        
-        
 
-        new_mtx_KxSxA = self.llh_bc(l_data_KxSxA[:,1:2,:], r_data_KxSxA[:,1:2,:], self.lam, self.t_cut)
+        
+        
+        # compute the likelihood of the newly proposed state
+        # instaed of passing in self.lam we need to pass in the decay rate, which is obtained
+        # by adding the masses of the child nodes that were selected to coalesce
+
+        # define a function that 
+        #decay_factor_r = tf.gather(self.decay_factors_Nm1xK, r)
+        decay_factor_r = tf.exp(self.decay_dist.sample([self.K,1]))
+
+
+        new_mtx_KxSxA = self.llh_bc(l_data_KxSxA[:,1:2,:], r_data_KxSxA[:,1:2,:], self.t_cut, decay_factor_r) #, self.lam, self.t_cut, decay_factor_r)
         
         # new_mtx_KxSxA = self.broadcast_conditional_likelihood_K(l_data_KxSxA, r_data_KxSxA, q_l_branch_samples, q_r_branch_samples)
         
@@ -404,7 +443,9 @@ class VCSMC:
         
         # remaining are the nodes that have not been combined yet
         leafnode_num_record = tf.concat([reamining_leafnode_num_record, new_leafnode_num], axis=1)
-        
+        # there is another latent random variable (the decay rate) which is sampled from the distribution over lambda
+        # but not accounted for in our code. Simply addint the left and right invariant masses doesnt yield the parent since
+        # the the mass decreases as we move down the tree. 
         # pdb.set_trace()
         log_likelihood_r = self.compute_forest_posterior_ginkgo(core, leafnode_num_record, r)
         
@@ -421,11 +462,19 @@ class VCSMC:
         # l_branch = tf.gather(left_branches, r+1)
         # r_branch = tf.gather(right_branches, r+1)
         
-        log_weights_r = log_likelihood_r - log_likelihood_tilde + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal
+        # JET CODE (DOUBLE CHECK)
+        log_weights_r = log_likelihood_r - log_likelihood_tilde + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal - tf.log(self.lam)
         # - \
         # (tf.log(left_branches_param_r) - left_branches_param_r * l_branch + tf.log(right_branches_param_r) - \
         # right_branches_param_r * r_branch) + 
+
+
         
+        ### ORIGINAL FROM OLD CODE BELOW
+        #log_weights_r = log_likelihood_r - log_likelihood_tilde - \
+        #(tf.log(left_branches_param_r) - left_branches_param_r * l_branch + tf.log(right_branches_param_r) - \
+        #right_branches_param_r * r_branch) + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal
+        ###
 
         log_weights = tf.concat([log_weights, [log_weights_r]], axis=0)
         log_likelihood = tf.concat([log_likelihood, [log_likelihood_r]], axis=0) # pi(t) = pi(Y|t, b, theta) * pi(t, b|theta) / pi(Y)
@@ -526,7 +575,7 @@ class VCSMC:
         """
         K = self.K
         self.lr = learning_rate
-        # pdb.set_trace()
+        #pdb.set_trace()
         config = tf.ConfigProto()
         if memory_optimization == 'off':
             from tensorflow.core.protobuf import rewriter_config_pb2
@@ -608,7 +657,8 @@ class VCSMC:
                                self.v_minus,
                                # self.left_branches_param,
                                # self.right_branches_param,
-                               self.jump_chains],
+                               self.jump_chains,
+                               self.decay_factors_Nm1xK],
                                feed_dict={self.core: data})
             cost = output[0]
             # stats = output[1]
@@ -631,12 +681,15 @@ class VCSMC:
             # print('Q-matrix\n', Qs)
             # print('Left branches\n', lb)
             # print('Right branches\n', rb)
-            # print('Log Weights\n', np.round(log_Ws,3))
+            print('Log Weights\n', np.round(log_Ws,3))
             print('Log likelihood\n', np.round(log_liks,3))
             print('Log likelihood tilde\n', np.round(log_lik_tilde,3))
             # print('LB param:\n', lb_param)
             # print('RB param:\n', rb_param)
             print('Log likelihood at R\n', np.round(log_lik_R,3))
+            print('Overcount ', np.round(overcount,3))
+            print('lambda param ', np.round(lam_,3))
+            # print("Decay factors: ", np.round(output[-1],3))
             # print('Jump chains')
             # for i in range(len(jc)):
             #     print(jc[i])
