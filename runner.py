@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument('--n_particles',
                         type=int,
                         help='number of SMC samples.',
-                        default=10)
+                        default=128)
     parser.add_argument('--batch_size',
                         type=int,
                         help='number of sites on genome per batch.',
@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument('--learning_rate',
                         type=float,
                         help='Learning rate.',
-                        default=0.001)
+                        default=0.0005)
     parser.add_argument('--num_epoch',
                         type=int,
                         help='number of epoches to train.',
@@ -36,6 +36,14 @@ def parse_args():
                        help='Optimizer for Training',
                        default='GradientDescentOptimizer')
     parser.add_argument('--branch_prior',
+                       type=float,
+                       help='Hyperparameter for branch length initialization.',
+                       default=np.log(10))
+    parser.add_argument('--lambda_prior',
+                       type=float,
+                       help='Hyperparameter for branch length initialization.',
+                       default=np.log(10))
+    parser.add_argument('--decay_prior',
                        type=float,
                        help='Hyperparameter for branch length initialization.',
                        default=np.log(10))
@@ -74,6 +82,7 @@ if __name__ == "__main__":
     hohna_data_7 = False
     hohna_data_8 = False
     primate_data_wang = False
+
     ginkgo = True
 
     args = parse_args()
@@ -184,26 +193,23 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
     if ginkgo:
-        data = pd.read_pickle('data/gingko/test_data_14.p')
-        #print(np.swapaxes(data, 1, 2).shape)
+        data = pd.read_pickle('data/ginkgo/test_data_14.p')
+        print(np.swapaxes(data, 1, 2).shape)
         datadict = {
             'samples' : np.arange(data.shape[0]).astype(str).tolist(),
             'data' : np.swapaxes(data, 1, 2)
         }
-        #print(datadict['samples'])
+        print(datadict['samples'])
         #import pdb
-        #pdb.set_trace()
-
-    if args.nested == True:
-        import vncsmc as vcsmc
-    else:
-        import vcsmc_jet as vcsmc
+        # pdb.set_trace()
 
 
     if args.nested == True:
         import vncsmc as vcsmc
-    else:
-        import vcsmc_jet as vcsmc
+    elif not ginkgo:
+        import vcsmc as vcsmc
+    elif ginkgo:
+        import jet_vcsmc as vcsmc
         
 
     #pdb.set_trace()
