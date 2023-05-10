@@ -42,11 +42,11 @@ def parse_args():
     parser.add_argument('--lambda_prior',
                        type=float,
                        help='Hyperparameter for branch length initialization.',
-                       default=np.log(10))
+                       default=np.log(3))
     parser.add_argument('--decay_prior',
                        type=float,
                        help='Hyperparameter for branch length initialization.',
-                       default=np.log(10))
+                       default=np.log(2.3))
     parser.add_argument('--M',
                        type=int,
                        help='number of subparticles to compute look-ahead particles',
@@ -193,13 +193,18 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
     if ginkgo:
-        data = pd.read_pickle('data/ginkgo/test_data_14.p')
-        print(np.swapaxes(data, 1, 2).shape)
+        data = pd.read_pickle('data/ginkgo/new_test_data0.p')
+        #import pdb
+        #pdb.set_trace()
+        print(np.swapaxes(data['data'], 1, 2).shape)
+
         datadict = {
-            'samples' : np.arange(data.shape[0]).astype(str).tolist(),
-            'data' : np.swapaxes(data, 1, 2)
+            'samples' : np.arange(data['data'].shape[0]).astype(str).tolist(),
+            'data' : np.swapaxes(data['data'], 1, 2),
+            'ground_truth_llh' : data['llh']
         }
         print(datadict['samples'])
+        print(f"ground truth log likelihood: {data['llh']}")
         #import pdb
         # pdb.set_trace()
 
