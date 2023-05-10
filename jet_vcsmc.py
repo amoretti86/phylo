@@ -1,5 +1,5 @@
 """
-An implementation of Variational Combinatorial Sequential Monte Carlo for Jet Reconstruction under the Gingko model.
+An implementation of Variational Combinatorial Sequential Monte Carlo for jet reconstruction under the Gingko model.
   A variant of Combinatorial Sequential Monte Carlo is used to form a variational objective
   to simultaneously learn the parameters of the proposal and target distribution
   and perform jet reconstruction.
@@ -117,15 +117,21 @@ class VCSMC:
         self.lam = tf.exp(tf.Variable(0+self.args.lambda_prior, dtype=tf.float64, name='lambda_param'))
         self.t_cut = tf.cast(self.findTCut(), dtype = tf.float64)
         
-        self.K = K # number of monti carlo samples
+        self.K = K # number of monte carlo samples
         self.M = args.M  # not needed 
         self.N = len(self.data_NxSxA) # number of leaves
         self.S = 2 # len(self.data_NxSxA[0]) # always 1 hack s.t. less rewrite
         self.A = 4 # len(self.data_NxSxA[0, 0]) # number of sites always 5 due to 4 vec + delta
+        #### change ####
         # the left and the right exp parameters (invariant masses)
+        #self.decay_param = tf.exp(tf.Variable(self.args.decay_prior, dtype=tf.float64, name='decay_param'))
         self.decay_param = tf.exp(tf.Variable(self.args.decay_prior, dtype=tf.float64, name='decay_param'))
         self.decay_dist = tfp.distributions.Exponential(rate=self.decay_param)
- 
+        #self.decay_factors_Nm1xK = tf.exp(self.decay_dist.sample([self.N-1,self.K]))
+        #self.left_and_right_decay_rates_2xNm1xK = self.left_and_right_decay_rates_2xNm1xK
+
+
+
         # q_r_branch_dist = tfp.distributions.Exponential(rate=right_branches_param_r)
         # q_l_branch_samples = q_l_branch_dist.sample(self.K) 
         # self.left_decay_param = tf.exp(tf.Variable(np.zeros(self.N-1)+self.args.branch_prior, dtype=tf.float64, name='left_decay_param'))
@@ -141,7 +147,8 @@ class VCSMC:
     def llh_bc(self, l_data_Kx1x4, r_data_Kx1x4, t_cut, decay_factor_r): #lam, t_cut, decay_factor_r):
         """
         Accepts 4-vec for left and right nodes, 
-        Confirm the Kx1 vector of the current sampled decay rate is updated correctly
+        (lam here is self.lam but it should be a Kx1 vector of the current sampled decay rate)
+        t_cut does not change. 
         """
         #pdb.set_trace()
         # grab left invariant mass
@@ -305,7 +312,8 @@ class VCSMC:
         # left_branches_logprior = tf.reduce_sum(l_multiplier - l_exponent, axis=1)
         # right_branches_logprior = tf.reduce_sum(r_multiplier - r_exponent, axis=1)
         log_likelihood_R = tf.gather(log_likelihood, self.N-2) + \
-          log_double_factorial(2 * self.N - 3) # - \
+          log_double_factorial(2 * self.N - 3)  #- tf.log(self.decay_param) #- 
+          #self.
           # left_branches_logprior - right_branches_logprior
         return log_likelihood_R          
 
@@ -373,7 +381,7 @@ class VCSMC:
     
     # main loop of program, runs once per n - 1 coalescent events. Three steps. Resampling
     def body_rank_update(self, log_weights, log_likelihood, log_likelihood_tilde, jump_chains, jump_chain_tensor, 
-        core, leafnode_num_record, v_minus, r):
+        core, leafnode_num_record, decay_factors, v_minus, r):
         """
         Define tensors for log_weights, log_likelihood, jump_chain_tensor and core (state data for distribution over characters for ancestral taxa)
         by iterating over rank events.
@@ -426,10 +434,13 @@ class VCSMC:
 
         # define a function that 
         #decay_factor_r = tf.gather(self.decay_factors_Nm1xK, r)
-        decay_factor_r = tf.exp(self.decay_dist.sample([self.K,1]))
+        #decay_factor_r = tf.exp(self.decay_dist.sample([self.K,1]))
+        decay_factor_r = tf.exp(self.decay_dist.sample(self.K))
 
 
-        new_mtx_KxSxA = self.llh_bc(l_data_KxSxA[:,1:2,:], r_data_KxSxA[:,1:2,:], self.t_cut, decay_factor_r) #, self.lam, self.t_cut, decay_factor_r)
+        decay_factors = tf.concat([decay_factors, [decay_factor_r]], axis=0)
+
+        new_mtx_KxSxA = self.llh_bc(l_data_KxSxA[:,1:2,:], r_data_KxSxA[:,1:2,:], self.t_cut, tf.expand_dims(decay_factor_r,axis=1)) #, self.lam, self.t_cut, decay_factor_r)
         
         # new_mtx_KxSxA = self.broadcast_conditional_likelihood_K(l_data_KxSxA, r_data_KxSxA, q_l_branch_samples, q_r_branch_samples)
         
@@ -450,6 +461,7 @@ class VCSMC:
         log_likelihood_r = self.compute_forest_posterior_ginkgo(core, leafnode_num_record, r)
         
         # book keeping for tf
+        #decay_rates_select = tf.gather(decay_factors, tf.range(1,r+2))
         # left_branches_select = tf.gather(left_branches, tf.range(1, r+2)) # (r+1)xK
         # right_branches_select = tf.gather(right_branches, tf.range(1, r+2)) # (r+1)xK
         # left_branches_logprior = tf.reduce_sum(
@@ -461,9 +473,10 @@ class VCSMC:
         v_minus = self.overcounting_correct(leafnode_num_record)
         # l_branch = tf.gather(left_branches, r+1)
         # r_branch = tf.gather(right_branches, r+1)
+        decay = tf.gather(decay_factors, r+1)
         
         # JET CODE (DOUBLE CHECK)
-        log_weights_r = log_likelihood_r - log_likelihood_tilde + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal - tf.log(self.lam)
+        log_weights_r = log_likelihood_r - log_likelihood_tilde + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal - tf.log(self.lam) - tf.log(self.decay_param) - (self.decay_param * decay)
         # - \
         # (tf.log(left_branches_param_r) - left_branches_param_r * l_branch + tf.log(right_branches_param_r) - \
         # right_branches_param_r * r_branch) + 
@@ -482,10 +495,10 @@ class VCSMC:
         r = r + 1
 
         return log_weights, log_likelihood, log_likelihood_tilde, jump_chains, jump_chain_tensor, \
-        core, leafnode_num_record, v_minus, r
+        core, leafnode_num_record, decay_factors, v_minus, r
 
     def cond_rank_update(self, log_weights, log_likelihood, log_likelihood_tilde, jump_chains, jump_chain_tensor, 
-        core, leafnode_num_record, v_minus, r):
+        core, leafnode_num_record, decay_factors, v_minus, r):
         return r < self.N - 1
 
     def sample_phylogenies(self):
@@ -504,6 +517,7 @@ class VCSMC:
 
         # left_branches = tf.constant(0, shape=(1, K), dtype=tf.float64)
         # right_branches = tf.constant(0, shape=(1, K), dtype=tf.float64)
+        decay_factors = tf.constant(0, shape=(1,K), dtype=tf.float64)
 
         log_weights = tf.constant(0, shape=(1, K), dtype=tf.float64)
         log_likelihood = tf.constant(0, shape=(1, K), dtype=tf.float64)
@@ -518,14 +532,14 @@ class VCSMC:
         
         # --- MAIN LOOP ----+
         log_weights, log_likelihood, log_likelihood_tilde, self.jump_chains, self.jump_chain_tensor, \
-        core_final, record_final, v_minus, r = tf.while_loop(
+        core_final, record_final, decay_factors, v_minus, r = tf.while_loop(
             self.cond_rank_update, 
             self.body_rank_update,
             loop_vars=[log_weights, log_likelihood, log_likelihood_tilde, self.jump_chains, self.jump_chain_tensor, 
-                       self.core_with_llh, leafnode_num_record, v_minus, tf.constant(0)],
+                       self.core_with_llh, leafnode_num_record, decay_factors, v_minus, tf.constant(0)],
             shape_invariants=[tf.TensorShape([None, K]), tf.TensorShape([None, K]), log_likelihood_tilde.get_shape(),
                               tf.TensorShape([K, None]), tf.TensorShape([K, None]), tf.TensorShape([K, None, None, A]),
-                              tf.TensorShape([K, None]), 
+                              tf.TensorShape([K, None]), tf.TensorShape([None,K]),
                               v_minus.get_shape(), tf.TensorShape([])])
         # ------------------+
 
@@ -533,6 +547,7 @@ class VCSMC:
         self.log_likelihood = tf.gather(log_likelihood, list(range(1, N))) # remove the trivial index 0
         # self.left_branches = tf.gather(left_branches, list(range(1, N))) # remove the trivial index 0
         # self.right_branches = tf.gather(right_branches, list(range(1, N))) # remove the trivial index 0
+        self.decay_factors = tf.gather(decay_factors, list(range(1,N))) # remove the trivial index 0
         self.elbo = self.compute_log_ZSMC(log_weights) # cost computed eq(5), computed using eq(8)
         self.log_likelihood_R = self.get_log_likelihood(self.log_likelihood)
         self.cost = - self.elbo
@@ -542,14 +557,17 @@ class VCSMC:
         return self.elbo
     
     def precompute_llh(self, data, lam, t_cut): #### change ####
-        data = tf.reshape(data, (-1,1, 4))
+        """ This is just the log llh_bc function """
+        data = tf.reshape(data, (-1,1, 4)) # data is KxNx1x4
 
         tp_KNx1 = data[:, :,0] ** 2 - tf.norm(data[:, :,1:], axis = -1) ** 2
 
         def get_leaf_llh(tP_local_Xx1, t_cut, lam):
-            t_upper_Xx1 = tf.minimum(tP_local_Xx1, t_cut) #There are cases where tp2 < t_cut
-            return tf.cast(-tf.math.log(1 - tf.math.exp(- (1 - 1e-3) * lam)), dtype = tf.float64) + \
-                tf.cast(tf.math.log(1 - tf.math.exp(- lam * t_upper_Xx1 / tP_local_Xx1)), dtype = tf.float64)
+            #t_upper_Xx1 = tf.minimum(tP_local_Xx1, t_cut) #There are cases where tp2 < t_cut
+            #return tf.cast(-tf.math.log(1 - tf.math.exp(- (1 - 1e-3) * lam)), dtype = tf.float64) + \
+            #    tf.cast(tf.math.log(1 - tf.math.exp(- lam * t_upper_Xx1 / tP_local_Xx1)), dtype = tf.float64)
+            ones_tensor = tf.ones(shape=(self.K*self.N, 1))
+            return tf.cast(ones_tensor, dtype=tf.float64)
 
         llh_KNx1 = get_leaf_llh(tp_KNx1, lam, t_cut)
 
@@ -638,6 +656,8 @@ class VCSMC:
         for i in tqdm(range(epochs)):
             bt = datetime.now()
 
+
+
             # for j in tqdm(range(len(slices)-1)):
             #     data_batch = np.take(data, slices[j], axis=2)
             _, cost = sess.run([self.optimizer, self.cost], feed_dict={self.core: data})
@@ -658,7 +678,8 @@ class VCSMC:
                                # self.left_branches_param,
                                # self.right_branches_param,
                                self.jump_chains,
-                               self.decay_factors_Nm1xK],
+                               self.decay_param,
+                               self.decay_factors],
                                feed_dict={self.core: data})
             cost = output[0]
             # stats = output[1]
@@ -687,9 +708,10 @@ class VCSMC:
             # print('LB param:\n', lb_param)
             # print('RB param:\n', rb_param)
             print('Log likelihood at R\n', np.round(log_lik_R,3))
-            print('Overcount ', np.round(overcount,3))
+            #print('Overcount ', np.round(overcount,3))
             print('lambda param ', np.round(lam_,3))
-            # print("Decay factors: ", np.round(output[-1],3))
+            print(f'decay_param: {np.round(output[8],3)}')
+            print(f"Decay factors: {np.round(output[9],3)}")
             # print('Jump chains')
             # for i in range(len(jc)):
             #     print(jc[i])
