@@ -163,7 +163,7 @@ class VCSMC:
 
         # here we define the parent mass, which has not been scaled up to account for exponential decay
         tp_Kx1 = p_data_Kx1x4[:, :,0] ** 2 - tf.norm(p_data_Kx1x4[:, :,1:], axis = -1) ** 2
-        tp_Kx1 = tf.math.multiply(tp_Kx1, decay_factor_r) #  1.01) #decay_factor_r
+        # tp_Kx1 = tf.math.multiply(tp_Kx1, decay_factor_r) #  1.01) # dont think this is needed
 
 
         is_negative_Kx1 = tf.logical_or(tf.logical_or(tf.less(tL_Kx1, 0), tf.less(tR_Kx1, 0)), tf.less_equal(tp_Kx1, 0))
@@ -476,7 +476,7 @@ class VCSMC:
         decay = tf.gather(decay_factors, r+1)
         
         # JET CODE (DOUBLE CHECK)
-        log_weights_r = log_likelihood_r - log_likelihood_tilde + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal - tf.log(self.lam) - tf.log(self.decay_param) - (self.decay_param * decay)
+        log_weights_r = log_likelihood_r - log_likelihood_tilde + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal - tf.log(self.lam) #- tf.log(self.decay_param) - (self.decay_param * decay)
         # - \
         # (tf.log(left_branches_param_r) - left_branches_param_r * l_branch + tf.log(right_branches_param_r) - \
         # right_branches_param_r * r_branch) + 
