@@ -193,21 +193,56 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
     if ginkgo:
-        data = pd.read_pickle('data/ginkgo/new_test_data0.p')
+        #data = pd.read_pickle('data/ginkgo/new_test_data0.p')
+        data = pd.read_pickle('data/ginkgo/100jets.p')
+        #full_data = pd.read_pickle('data/ginkgo/repo_100jets.p')
+        #import pickle
+        #with open('data/ginkgo/tree_100_truth_3.pkl', 'rb') as fd:
+        #    truth_jets = pickle.load(fd, encoding='latin-1')        
         #import pdb
         #pdb.set_trace()
+
+        all_results = {}
+
+        for i in range(1):
+            data = data[i]
+            data['data'] = np.expand_dims(data['data'],axis=1)
+            datadict = {
+            'samples' : np.arange(data['data'].shape[0]).astype(str).tolist(),
+            'data' : data['data'],#np.swapaxes(data['data'], 1, 2),
+            'ground_truth_llh' : data['llh']
+            }
+            print(datadict['samples'])
+            print(f"ground truth log likelihood: {data['llh']}")
+
+            import jet_vcsmc as vcsmc
+            vcsmc = vcsmc.VCSMC(datadict, K=args.n_particles, args=args)
+            results = vcsmc.train(epochs=args.num_epoch, batch_size=args.batch_size, learning_rate=args.learning_rate, memory_optimization=args.memory_optimization)
+            all_results[i] = results
+
+        import pickle
+        with open('entire_results.p', 'wb') as f:
+            #pdb.set_trace()
+            pickle.dump(all_results, f)
+
+
+            
+
+        """
+        data = data[1]
+        data['data'] = np.expand_dims(data['data'],axis=1)
         print(np.swapaxes(data['data'], 1, 2).shape)
 
         datadict = {
             'samples' : np.arange(data['data'].shape[0]).astype(str).tolist(),
-            'data' : np.swapaxes(data['data'], 1, 2),
+            'data' : data['data'],#np.swapaxes(data['data'], 1, 2),
             'ground_truth_llh' : data['llh']
         }
         print(datadict['samples'])
         print(f"ground truth log likelihood: {data['llh']}")
         #import pdb
         # pdb.set_trace()
-
+        """
 
     if args.nested == True:
         import vncsmc as vcsmc
