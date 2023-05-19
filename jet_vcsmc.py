@@ -149,7 +149,7 @@ class VCSMC:
         return res
     
 
-    def llh_bc(self, l_data_Kx1x4, r_data_Kx1x4, t_cut, decay_factor_r): #lam, t_cut, decay_factor_r):
+    def llh_bc(self, l_data_Kx1x4, r_data_Kx1x4, t_cut, decay_factor_Kx1):
         """
         Accepts 4-vec for left and right nodes, 
         (lam here is self.lam but it should be a Kx1 vector of the current sampled decay rate)
@@ -175,6 +175,7 @@ class VCSMC:
 
         is_invalid_Kx1 = tf.logical_or(
                             tf.less_equal(tp_Kx1, t_cut),
+            
                             tf.logical_or(
                                tf.logical_or(
                                    tf.greater_equal(tL_Kx1, (1 - 1e-3) * tp_Kx1),
@@ -188,35 +189,36 @@ class VCSMC:
                          )
 
 
-        def valid_calc(tp_Xx1, tL_Xx1, tR_Xx1):
+        def valid_calc(tp_Xx1, tL_Xx1, tR_Xx1, decay_factor_Xx1):
 
-            def get_logp(tP_local_Xx1, t_Xx1, t_cut):#, lam):
+            def get_logp(tP_local_Xx1, t_Xx1, t_cut, decay_factor_Xx1):
                 """ Here we call the actual PDFs and CDFs defined in Eq (7) of the paper"""
 
-                def prob_is_leaf(tP_local_Xx1, t_Xx1, t_cut):#, lam):
+                def prob_is_leaf(tP_local_Yx1, t_Yx1, t_cut, decay_factor_Yx1):
                     """ The CDF defined in Eq (7) of the paper """
                     # Probability of the shower to stop F_s
-                    one_minus_cdf = 1 - tf.math.exp(- (1 - 1e-3)*self.lam)
+                    one_minus_cdf = 1 - tf.math.exp(- (1 - 1e-3)*decay_factor_Yx1)
                     prob = - tf.math.log(one_minus_cdf)\
-                           + tf.math.log(self.lam) - tf.math.log(tP_local_Xx1) - self.lam * t_Xx1 / tP_local_Xx1
+                           + tf.math.log(decay_factor_Yx1) - tf.math.log(tP_local_Yx1) - decay_factor_Yx1 * t_Yx1 / tP_local_Yx1
                     return prob
 
-                def prob_is_not_leaf(tP_local_Xx1, t_Xx1, t_cut):#, lam):
+                def prob_is_not_leaf(tP_local_Xx1, t_Xx1, t_cut, decay_factor_Xx1):
                     """ The PDF defined in Eq (7) of the paper """
                     t_upper_Xx1 = tf.minimum(tP_local_Xx1, t_cut) #There are cases where tp2 < t_cut
-                    one_minus_cdf = 1 - tf.math.exp(- (1 - 1e-3) * self. lam)
+                    one_minus_cdf = 1 - tf.math.exp(- (1 - 1e-3) * decay_factor_Xx1)
                     prob = -tf.math.log(one_minus_cdf) + \
-                            tf.math.log(1 - tf.math.exp(- self.lam * t_upper_Xx1 / tP_local_Xx1))
+                            tf.math.log(1 - tf.math.exp(- decay_factor_Xx1 * t_upper_Xx1 / tP_local_Xx1))
                     return prob
 
-                results_Xx1 = prob_is_not_leaf(tP_local_Xx1, t_Xx1, t_cut)#, self.lam)
+                results_Xx1 = prob_is_not_leaf(tP_local_Xx1, t_Xx1, t_cut, decay_factor_Xx1)
 
                 indices_Yx1 = tf.where(tf.greater(tf.squeeze(t_Xx1), t_cut))
 
                 tP_local_new_Yx1 = tf.gather(tf.squeeze(tP_local_Xx1), indices_Yx1)
                 t_new_Yx1 = tf.gather(tf.squeeze(t_Xx1), indices_Yx1)
+                decay_factor_Yx1 = tf.gather(tf.squeeze(decay_factor_Xx1), indices_Yx1)
 
-                updates_Yx1 = prob_is_leaf(tP_local_new_Yx1, t_new_Yx1, t_cut)#, lam)
+                updates_Yx1 = prob_is_leaf(tP_local_new_Yx1, t_new_Yx1, t_cut, decay_factor_Yx1)
 
                 results_Xx1 = tf.tensor_scatter_nd_update(results_Xx1, indices_Yx1, updates_Yx1)
 
@@ -232,9 +234,9 @@ class VCSMC:
 
             # Calculate the log propobability using the CDFs and PDFs
             # for each of the two cases where the left/right node is ultimately greater
-            logpLR_Xx1 = tf.cast(tf.math.log(1/2), dtype = tf.float64) + get_logp(tp_Xx1, tL_Xx1, t_cut) + get_logp(tpLR_Xx1, tR_Xx1, t_cut) 
+            logpLR_Xx1 = tf.cast(tf.math.log(1/2), dtype = tf.float64) + get_logp(tp_Xx1, tL_Xx1, t_cut,decay_factor_Xx1) + get_logp(tpLR_Xx1, tR_Xx1, t_cut, decay_factor_Xx1) 
 
-            logpRL_Xx1 = tf.cast(tf.math.log(1/2), dtype = tf.float64) + get_logp(tp_Xx1, tR_Xx1, t_cut) + get_logp(tpRL_Xx1, tL_Xx1, t_cut) #, self.lam)
+            logpRL_Xx1 = tf.cast(tf.math.log(1/2), dtype = tf.float64) + get_logp(tp_Xx1, tR_Xx1, t_cut, decay_factor_Xx1) + get_logp(tpRL_Xx1, tL_Xx1, t_cut, decay_factor_Xx1)
 
             # take the product of the two rightmost terms in Eq (8) where the one_minus_cdf term is distributed
             logp_split_Xx1 = tf.reduce_logsumexp(tf.stack([logpLR_Xx1, logpRL_Xx1]), axis = 0)
@@ -257,8 +259,9 @@ class VCSMC:
         tp_new_Xx1 = tf.gather(tf.squeeze(tp_Kx1), indices_Xx1)
         tL_new_Xx1 = tf.gather(tf.squeeze(tL_Kx1), indices_Xx1)
         tR_new_Xx1 = tf.gather(tf.squeeze(tR_Kx1), indices_Xx1)
+        decay_factor_Xx1 = tf.gather(tf.squeeze(decay_factor_Kx1), indices_Xx1)
 
-        updates_Xx1 = valid_calc(tp_new_Xx1, tL_new_Xx1, tR_new_Xx1)
+        updates_Xx1 = valid_calc(tp_new_Xx1, tL_new_Xx1, tR_new_Xx1, decay_factor_Xx1)
 
         results_Kx1 = tf.tensor_scatter_nd_update(results_Kx1, indices_Xx1, updates_Xx1)
         parent_vec4_Kx1x4 = tf.squeeze(l_data_Kx1x4 + r_data_Kx1x4)
@@ -452,7 +455,6 @@ class VCSMC:
 
 
         #lambda_factors = tf.concat([lambda_factors, [decay_factor_r]], axis=0)
-
         new_mtx_KxSxA = self.llh_bc(l_data_KxSxA[:,1:2,:], r_data_KxSxA[:,1:2,:], self.t_cut, tf.expand_dims(lambda_samples,axis=1)) #, self.lam, self.t_cut, decay_factor_r)
         
         # new_mtx_KxSxA = self.broadcast_conditional_likelihood_K(l_data_KxSxA, r_data_KxSxA, q_l_branch_samples, q_r_branch_samples)
