@@ -26,11 +26,11 @@ def parse_args():
     parser.add_argument('--learning_rate',
                         type=float,
                         help='Learning rate.',
-                        default=0.0005)
+                        default=0.01)
     parser.add_argument('--num_epoch',
                         type=int,
                         help='number of epoches to train.',
-                        default=100)
+                        default=1000)
     parser.add_argument('--optimizer',
                        type=str,
                        help='Optimizer for Training',
@@ -42,11 +42,11 @@ def parse_args():
     parser.add_argument('--lambda_prior',
                        type=float,
                        help='Hyperparameter for branch length initialization.',
-                       default=np.log(3))
+                       default=3)
     parser.add_argument('--decay_prior',
                        type=float,
                        help='Hyperparameter for branch length initialization.',
-                       default=np.log(2.3))
+                       default=np.log(1))
     parser.add_argument('--M',
                        type=int,
                        help='number of subparticles to compute look-ahead particles',
@@ -193,56 +193,24 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
     if ginkgo:
-        #data = pd.read_pickle('data/ginkgo/new_test_data0.p')
-        data = pd.read_pickle('data/ginkgo/100jets.p')
-        #full_data = pd.read_pickle('data/ginkgo/repo_100jets.p')
-        #import pickle
-        #with open('data/ginkgo/tree_100_truth_3.pkl', 'rb') as fd:
-        #    truth_jets = pickle.load(fd, encoding='latin-1')        
-        #import pdb
-        #pdb.set_trace()
-
-        all_results = {}
-
-        for i in range(1):
-            data = data[i]
-            data['data'] = np.expand_dims(data['data'],axis=1)
-            datadict = {
-            'samples' : np.arange(data['data'].shape[0]).astype(str).tolist(),
-            'data' : data['data'],#np.swapaxes(data['data'], 1, 2),
-            'ground_truth_llh' : data['llh']
-            }
-            print(datadict['samples'])
-            print(f"ground truth log likelihood: {data['llh']}")
-
-            import jet_vcsmc as vcsmc
-            vcsmc = vcsmc.VCSMC(datadict, K=args.n_particles, args=args)
-            results = vcsmc.train(epochs=args.num_epoch, batch_size=args.batch_size, learning_rate=args.learning_rate, memory_optimization=args.memory_optimization)
-            all_results[i] = results
-
-        import pickle
-        with open('entire_results.p', 'wb') as f:
-            #pdb.set_trace()
-            pickle.dump(all_results, f)
-
-
-            
-
-        """
-        data = data[1]
-        data['data'] = np.expand_dims(data['data'],axis=1)
-        print(np.swapaxes(data['data'], 1, 2).shape)
-
-        datadict = {
-            'samples' : np.arange(data['data'].shape[0]).astype(str).tolist(),
-            'data' : data['data'],#np.swapaxes(data['data'], 1, 2),
-            'ground_truth_llh' : data['llh']
-        }
-        print(datadict['samples'])
-        print(f"ground truth log likelihood: {data['llh']}")
+        datadict = pd.read_pickle('data/gingko/new_test_data_9.p')
+        # print(datadict)
+        # print()
+        datadict = pd.read_pickle('data/gingko/withSum_2jets.p')
+        # print(datadict)
+        # print(datadict)
+        jetData = np.expand_dims(datadict[0]["data"], axis = 1)
+        llhsum = datadict[0]['llh']
+        # print(jetData.shape)
+        datadict = {}
+        datadict['data'] = jetData
+        datadict['samples'] = [str(i) for i in range(len(datadict['data']))]
+        datadict['llh'] = llhsum
+        print("ground truth llh", datadict['llh'])
+        # print(datadict)
         #import pdb
         # pdb.set_trace()
-        """
+
 
     if args.nested == True:
         import vncsmc as vcsmc
