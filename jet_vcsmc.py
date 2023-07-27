@@ -120,7 +120,8 @@ class VCSMC:
         
         self.sd = 0.01
         self.decay_param = tf.exp(tf.Variable(self.args.decay_prior, dtype=tf.float64, name='decay_param'))
-        self.decay_dist = tfp.distributions.Exponential(rate=self.decay_param)
+        self.decay_dist = tfp.distributions.Normal(loc=self.decay_param, scale = 0.1)
+        self.decay_factor_r = tf.log(tf.exp(self.decay_dist.sample(self.K)))
         
         
     def findTCut(self):
@@ -371,7 +372,10 @@ class VCSMC:
         l_data_KxSxA = tf.squeeze(gather_across_core(core, l_coalesced_indices, self.N-r, 1, self.A))
         r_data_KxSxA = tf.squeeze(gather_across_core(core, r_coalesced_indices, self.N-r, 1, self.A))
         
-        decay_factor_r = tf.log(tf.exp(self.decay_dist.sample(self.K)))
+        
+        decay_factor_r = self.decay_factor_r
+        shape = tf.shape(self.decay_factor_r)
+        decay_factor_r = tf.fill(shape, self.decay_param)
 
 
         decay_factors = tf.concat([decay_factors, [decay_factor_r]], axis=0)
@@ -393,8 +397,8 @@ class VCSMC:
         v_minus = self.overcounting_correct(leafnode_num_record)
         decay = tf.gather(decay_factors, r+1)
         
-        log_weights_r = log_likelihood_r - log_likelihood_tilde + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal\
-                  - self.decay_dist.log_prob(decay_factor_r)
+        log_weights_r = log_likelihood_r #- log_likelihood_tilde + tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal\
+                  # - tf.log(self.decay_param)# - self.decay_dist.log_prob(decay_factor_r)
         
         log_weights = tf.concat([log_weights, [log_weights_r]], axis=0)
         log_likelihood = tf.concat([log_likelihood, [log_likelihood_r]], axis=0)
@@ -412,6 +416,9 @@ class VCSMC:
         """
         Main sampling routine that performs combinatorial SMC by calling the rank update subroutine
         """
+        # self.decay_factor_r = tf.log(tf.exp(self.decay_dist.sample(self.K)))
+        # shape = tf.shape(self.decay_factor_r)
+        # self.decay_factor_r = tf.fill(shape, self.decay_param)
         # outer loop that calls body_rank_update. A for loop of N - 1.
         
         N = self.N
@@ -479,11 +486,12 @@ class VCSMC:
     
     def precompute_llh(self, data, t_cut):
         data = tf.reshape(data, (-1,1, 4)) # data is KxNx1x4
+        
 
         def get_leaf_llh():
-
+            e = tf.constant(np.e, dtype=tf.float32)
             ones_tensor = tf.ones(shape=(self.K*self.N, 1))
-            return tf.cast(ones_tensor, dtype=tf.float64)
+            return tf.cast(e * ones_tensor, dtype=tf.float64)
 
         llh_KNx1 = get_leaf_llh()
 
