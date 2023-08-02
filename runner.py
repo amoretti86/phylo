@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument('--learning_rate',
                         type=float,
                         help='Learning rate.',
-                        default=0.01)
+                        default=0.011)
     parser.add_argument('--num_epoch',
                         type=int,
                         help='number of epoches to train.',
@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument('--branch_prior',
                        type=float,
                        help='Hyperparameter for branch length initialization.',
-                       default=np.log(10))
+                       default=np.log(5))
     parser.add_argument('--lambda_prior',
                        type=float,
                        help='Hyperparameter for branch length initialization.',
@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument('--decay_prior',
                        type=float,
                        help='Hyperparameter for branch length initialization.',
-                       default=np.log(1))
+                       default=np.log(5))
     parser.add_argument('--M',
                        type=int,
                        help='number of subparticles to compute look-ahead particles',
@@ -193,34 +193,57 @@ if __name__ == "__main__":
         datadict = form_dataset_from_strings(genome_strings, Alphabet_dir)
 
     if ginkgo:
-        datadict = pd.read_pickle('data/gingko/new_test_data_9.p')
-        # print(datadict)
-        # print()
-        datadict = pd.read_pickle('data/gingko/withSum_2jets.p')
+        all_datadict = pd.read_pickle('data/gingko/10_2p5_jets.p')
         # print(datadict)
         # print(datadict)
-        jetData = np.expand_dims(datadict[0]["data"], axis = 1)
-        llhsum = datadict[0]['llh']
-        # print(jetData.shape)
-        datadict = {}
-        datadict['data'] = jetData
-        datadict['samples'] = [str(i) for i in range(len(datadict['data']))]
-        datadict['llh'] = llhsum
-        print("ground truth llh", datadict['llh'])
+        leafNums = []
+        decay_params = []
+        for i in range(1,2):
+            leafs = len(all_datadict[i]["data"])
+            print("number of leaves:", leafs)
+            if leafs <= 10:
+                continue
+            leafNums.append(leafs)
+            jetData = np.expand_dims(all_datadict[i]["data"], axis = 1)
+            llhsum = all_datadict[i]['llh']
+            # print(jetData.shape)
+            datadict = {}
+            datadict['data'] = jetData
+            datadict['samples'] = [str(i) for i in range(len(datadict['data']))]
+            datadict['llh'] = llhsum
+            print("ground truth llh", datadict['llh'])
         # print(datadict)
         #import pdb
         # pdb.set_trace()
 
 
-    if args.nested == True:
-        import vncsmc as vcsmc
-    elif not ginkgo:
-        import vcsmc as vcsmc
-    elif ginkgo:
-        import jet_vcsmc as vcsmc
-        
+            if args.nested == True:
+                import vncsmc as vcsmc
+            elif not ginkgo:
+                import vcsmc as vcsmc
+            elif ginkgo:
+                import jet_vcsmc as vcsmc
 
-    #pdb.set_trace()
-    vcsmc = vcsmc.VCSMC(datadict, K=args.n_particles, args=args)
 
-    vcsmc.train(epochs=args.num_epoch, batch_size=args.batch_size, learning_rate=args.learning_rate, memory_optimization=args.memory_optimization)
+            #pdb.set_trace()
+            vcsmc = vcsmc.VCSMC(datadict, K=args.n_particles, args=args)
+
+            param = vcsmc.train(epochs=args.num_epoch, batch_size=args.batch_size, learning_rate=args.learning_rate, memory_optimization=args.memory_optimization)
+            
+            decay_params.append(param)
+        print(decay_params)
+        print("final estimate: " + str(np.average(decay_params)))
+        print(leafNums)
+    else:    
+        if args.nested == True:
+            import vncsmc as vcsmc
+        elif not ginkgo:
+            import vcsmc as vcsmc
+        elif ginkgo:
+            import jet_vcsmc as vcsmc
+
+
+        #pdb.set_trace()
+        vcsmc = vcsmc.VCSMC(datadict, K=args.n_particles, args=args)
+
+        param = vcsmc.train(epochs=args.num_epoch, batch_size=args.batch_size, learning_rate=args.learning_rate, memory_optimization=args.memory_optimization)
