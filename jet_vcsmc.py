@@ -264,7 +264,7 @@ class VCSMC:
         data_sliced = data_KxXxSxA[:, 0: self.N - r - 1, :, :]
         data_sliced = data_sliced[:, : , 0:1, :]
         data_sliced = data_sliced[:, : , :, 0:1]
-        data_added = tf.reduce_sum(data_sliced, axis = 1)
+        data_added = tf.reduce_logsumexp(data_sliced, axis = 1)
 
         forest_logprior = tf.reduce_sum(-log_double_factorial(2 * tf.maximum(leafnode_num_record, 2) - 3), axis=1)
         return tf.add(tf.squeeze(data_added), forest_logprior)
@@ -381,6 +381,7 @@ class VCSMC:
         decay_factors = tf.concat([decay_factors, [decay_factor_r]], axis=0)
 
         new_mtx_KxSxA, tL_Kx1, tR_Kx1, tp_Kx1 = self.llh_bc(l_data_KxSxA[:,1:2,:], r_data_KxSxA[:,1:2,:], self.t_cut, tf.expand_dims(decay_factor_r,axis=1))
+        llh_tilde = tf.identity(llh_sum)
         llh_sum += tf.reshape(new_mtx_KxSxA[:, 0:1, 0:1], (1, self.K))
         
         new_mtx_Kx1xSxA = tf.expand_dims(new_mtx_KxSxA, axis=1)
@@ -397,9 +398,10 @@ class VCSMC:
 
         v_minus = self.overcounting_correct(leafnode_num_record)
         decay = tf.gather(decay_factors, r+1)
-        
-        log_weights_r = log_likelihood_r - q_log_proposal + tf.log(tf.cast(v_minus, tf.float64)) - log_likelihood_tilde #+ tf.log(tf.cast(v_minus, tf.float64)) - q_log_proposal
-                  # - tf.log(self.decay_param)# - self.decay_dist.log_prob(decay_factor_r)
+        log_weights_r =  tf.squeeze(tf.reshape(new_mtx_KxSxA[:, 0:1, 0:1], (1,self.K))) +\
+                        tf.log(tf.cast(v_minus, tf.float64)) \
+                        - q_log_proposal \
+                        #+ log_likelihood_r - log_likelihood_tilde \
         
         log_weights = tf.concat([log_weights, [log_weights_r]], axis=0)
         log_likelihood = tf.concat([log_likelihood, [log_likelihood_r]], axis=0)
@@ -495,7 +497,7 @@ class VCSMC:
         def get_leaf_llh():
             e = tf.constant(np.e, dtype=tf.float32)
             ones_tensor = tf.ones(shape=(self.K*self.N, 1))
-            return tf.cast(-10 ** (8) * ones_tensor, dtype=tf.float64)
+            return tf.cast(-tf.float64.max * ones_tensor, dtype=tf.float64)
 
         llh_KNx1 = get_leaf_llh()
 
