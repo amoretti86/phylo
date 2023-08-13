@@ -111,17 +111,19 @@ class VCSMC:
         self.args = args
         self.sample_names = datadict['samples']
         self.data_NxSxA = datadict['data']
-        self.t_cut = tf.cast(self.findTCut(), dtype = tf.float64)
-        
+        self.t_cut = 1.1 ** 2#datadict['min_leaf']
+        self.max_leaf = datadict['max_leaf']
+
         self.K = K # number of monte carlo samples
         self.N = len(self.data_NxSxA) # number of leaves
         self.S = 2
         self.A = 4
         
-        self.sd = 0.01
         self.decay_param = tf.exp(tf.Variable(self.args.decay_prior, dtype=tf.float64, name='decay_param'))
         self.decay_dist = tfp.distributions.Normal(loc=self.decay_param, scale = 0.1)
         self.decay_factor_r = tf.log(tf.exp(self.decay_dist.sample(self.K)))
+        self.prior_dist = tfp.distributions.MultivariateNormalFullCovariance(
+            loc = datadict['prior_mean'], covariance_matrix=datadict['prior_cov'])
         
         
     def findTCut(self):
@@ -264,7 +266,7 @@ class VCSMC:
         data_sliced = data_KxXxSxA[:, 0: self.N - r - 1, :, :]
         data_sliced = data_sliced[:, : , 0:1, :]
         data_sliced = data_sliced[:, : , :, 0:1]
-        data_added = tf.reduce_logsumexp(data_sliced, axis = 1)
+        data_added = tf.reduce_sum(data_sliced, axis = 1)
 
         forest_logprior = tf.reduce_sum(-log_double_factorial(2 * tf.maximum(leafnode_num_record, 2) - 3), axis=1)
         return tf.add(tf.squeeze(data_added), forest_logprior)
@@ -370,8 +372,17 @@ class VCSMC:
         l_coalesced_indices = tf.reshape(tf.gather(tf.transpose(coalesced_indices), 0), (self.K, 1))
         r_coalesced_indices = tf.reshape(tf.gather(tf.transpose(coalesced_indices), 1), (self.K, 1))
         l_data_KxSxA = tf.squeeze(gather_across_core(core, l_coalesced_indices, self.N-r, 1, self.A))
-        r_data_KxSxA = tf.squeeze(gather_across_core(core, r_coalesced_indices, self.N-r, 1, self.A))
+        r_data_KxSxA = tf.squeeze(gather_across_core(core, r_coalesced_indices, self.N-r, 1, self.A)) 
         
+        l_masses = tf.reshape(l_data_KxSxA[:,1,0], (self.K,))
+        r_masses = tf.reshape(r_data_KxSxA[:,1,0], (self.K,))
+        l_vec4s = tf.reshape(r_data_KxSxA[:,1,:], (self.K, 4))
+        r_vec4s = tf.reshape(r_data_KxSxA[:,1,:], (self.K, 4))
+        l_prior_llhs = tf.reshape(self.prior_dist.prob(l_vec4s), (self.K,))
+        r_prior_llhs = tf.reshape(self.prior_dist.prob(r_vec4s), (self.K,))
+        l_forest_llh_adjustment = tf.where(l_masses <= self.t_cut, l_prior_llhs, tf.zeros((self.K,), dtype=tf.float64))
+        r_forest_llh_adjustment = tf.where(r_masses <= self.t_cut, r_prior_llhs, tf.zeros((self.K,), dtype=tf.float64))
+        forest_adjustment = l_forest_llh_adjustment + r_forest_llh_adjustment
         
         decay_factor_r = self.decay_factor_r
         shape = tf.shape(self.decay_factor_r)
@@ -381,7 +392,6 @@ class VCSMC:
         decay_factors = tf.concat([decay_factors, [decay_factor_r]], axis=0)
 
         new_mtx_KxSxA, tL_Kx1, tR_Kx1, tp_Kx1 = self.llh_bc(l_data_KxSxA[:,1:2,:], r_data_KxSxA[:,1:2,:], self.t_cut, tf.expand_dims(decay_factor_r,axis=1))
-        llh_tilde = tf.identity(llh_sum)
         llh_sum += tf.reshape(new_mtx_KxSxA[:, 0:1, 0:1], (1, self.K))
         
         new_mtx_Kx1xSxA = tf.expand_dims(new_mtx_KxSxA, axis=1)
@@ -398,10 +408,11 @@ class VCSMC:
 
         v_minus = self.overcounting_correct(leafnode_num_record)
         decay = tf.gather(decay_factors, r+1)
-        log_weights_r =  tf.squeeze(tf.reshape(new_mtx_KxSxA[:, 0:1, 0:1], (1,self.K))) +\
+        
+        log_weights_r = tf.squeeze(tf.reshape(new_mtx_KxSxA[:, 0:1, 0:1], (1,self.K))) +\
                         tf.log(tf.cast(v_minus, tf.float64)) \
                         - q_log_proposal \
-                        #+ log_likelihood_r - log_likelihood_tilde \
+                        - forest_adjustment
         
         log_weights = tf.concat([log_weights, [log_weights_r]], axis=0)
         log_likelihood = tf.concat([log_likelihood, [log_likelihood_r]], axis=0)
@@ -420,9 +431,6 @@ class VCSMC:
         """
         Main sampling routine that performs combinatorial SMC by calling the rank update subroutine
         """
-        # self.decay_factor_r = tf.log(tf.exp(self.decay_dist.sample(self.K)))
-        # shape = tf.shape(self.decay_factor_r)
-        # self.decay_factor_r = tf.fill(shape, self.decay_param)
         # outer loop that calls body_rank_update. A for loop of N - 1.
         
         N = self.N
@@ -431,6 +439,7 @@ class VCSMC:
         
         # KxNx?xA. A = 4. Self.core can store vec4 values, 
         self.core = tf.placeholder(dtype=tf.float64, shape=(K, N, None, A)) # tf.TensorShape([K, None, None, A])
+        print(self.core.shape)
         leafnode_num_record = tf.constant(1, shape=(K, N), dtype=tf.int32) # Keeps track of self.core
 
         decay_factors = tf.constant(0, shape=(1,K), dtype=tf.float64)
@@ -446,7 +455,7 @@ class VCSMC:
         self.core_with_llh = self.precompute_llh(self.core, self.t_cut)
         
         llh_sum = tf.constant(0, shape=(1, K), dtype=tf.float64)
-        
+
         # --- MAIN LOOP ----+
         log_weights, log_likelihood, log_likelihood_tilde, self.jump_chains, self.jump_chain_tensor, \
         core_final, record_final, decay_factors, v_minus, r, llh_sum, llh_ts = tf.while_loop(
@@ -491,31 +500,31 @@ class VCSMC:
         return tf.log(lam_Kx1) -lam_Kx1 * tp_Kx1
     
     def precompute_llh(self, data, t_cut):
-        data = tf.reshape(data, (-1,1, 4)) # data is KxNx1x4
+#         data = tf.reshape(data, (-1,1, 4)) # data is KxNx1x4
         
 
-        def get_leaf_llh():
-            e = tf.constant(np.e, dtype=tf.float32)
-            ones_tensor = tf.ones(shape=(self.K*self.N, 1))
-            return tf.cast(-tf.float64.max * ones_tensor, dtype=tf.float64)
+#         def get_leaf_llh():
+#             e = tf.constant(np.e, dtype=tf.float32)
+#             ones_tensor = tf.ones(shape=(self.K*self.N, 1))
+#             return tf.cast(-4000 * ones_tensor, dtype=tf.float64)
 
-        llh_KNx1 = get_leaf_llh()
+#         llh_KNx1 = get_leaf_llh()
 
-        results_KNx1_copied = tf.tile(
-            tf.reshape(
-                tf.squeeze(llh_KNx1), (-1, 1)
-            ), 
-            (1, 4)
-        )
+#         results_KNx1_copied = tf.tile(
+#             tf.reshape(
+#                 tf.squeeze(llh_KNx1), (-1, 1)
+#             ), 
+#             (1, 4)
+#         )
 
-        like_stacked_vec4_Kx2x4 = tf.stack(
-                [
-                    results_KNx1_copied,
-                    tf.squeeze(data)
-                ],
-                axis=1
-        )
-        return tf.reshape(like_stacked_vec4_Kx2x4,(self.K,self.N,self.S,self.A))
+#         like_stacked_vec4_Kx2x4 = tf.stack(
+#                 [
+#                     results_KNx1_copied,
+#                     tf.squeeze(data)
+#                 ],
+#                 axis=1
+#         )
+        return data
 
     def train(self, epochs=100, batch_size=128, learning_rate=0.001, memory_optimization='on'):
         """
@@ -531,9 +540,7 @@ class VCSMC:
             
         data = np.array([self.data_NxSxA] * K, dtype = np.double) # KxNxSxA
         
-        
         print('================= Dataset shape: KxNxSxA =================')
-        print(data.shape)
         print('==========================================================')
         # pdb.set_trace()
         self.sample_phylogenies()
@@ -596,7 +603,7 @@ class VCSMC:
                                self.decay_param,
                                self.decay_factors,
                                self.llh_sum,
-                               self.llh_ts
+                               self.llh_ts,
                               ],
                                feed_dict={self.core: data})
             cost = output[0]
