@@ -301,8 +301,8 @@ class VCSMC:
         data = tf.cast(data, dtype=tf.float32)
         # Gumbel-max trick to sample without replacement
         z = -tf.math.log(-tf.math.log(tf.random.uniform(tf.shape(data), 0, 1)))
-        top_values, coalesced_indices = tf.nn.top_k(data + z, 2)
-        bottom_values, remaining_indices = tf.nn.top_k(tf.negative(data + z), self.N - r - 2)
+        top_values, coalesced_indices = tf.nn.top_k(z, 2)
+        bottom_values, remaining_indices = tf.nn.top_k(tf.negative(z), self.N - r - 2)
         JC_keep = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), remaining_indices)
         particles = tf.gather(tf.reshape(JCK, [self.K * (self.N - r)]), coalesced_indices)
         particle1 = particles[:, 0]
